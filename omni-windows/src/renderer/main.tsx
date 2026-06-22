@@ -20,8 +20,6 @@ type BroadcastStatus = {
   message: string;
 };
 
-type LayoutMode = 'tabs' | 'split';
-
 const PROVIDERS: Array<{
   id: ProviderId;
   label: string;
@@ -44,7 +42,12 @@ const PROVIDERS: Array<{
 
 function App() {
   const [activeProviderId, setActiveProviderId] = React.useState<ProviderId>('claude');
-  const [layoutMode, setLayoutMode] = React.useState<LayoutMode>('tabs');
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+  const [collapsedProviders, setCollapsedProviders] = React.useState<Record<ProviderId, boolean>>({
+    claude: false,
+    chatgpt: false,
+  });
+  const [broadcastCollapsed, setBroadcastCollapsed] = React.useState(false);
   const [broadcastText, setBroadcastText] = React.useState('');
   const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<ProviderId, BroadcastStatus>>({
     claude: { state: 'idle', message: 'Ready' },
@@ -159,90 +162,142 @@ function App() {
     [handleBroadcastSubmit],
   );
 
+  const handleWorkspaceSelect = React.useCallback((providerId: ProviderId) => {
+    setActiveProviderId(providerId);
+    setCollapsedProviders((current) => ({
+      ...current,
+      [providerId]: false,
+    }));
+  }, []);
+
+  const toggleProviderCollapsed = React.useCallback((providerId: ProviderId) => {
+    setCollapsedProviders((current) => {
+      if (current[providerId]) {
+        setActiveProviderId(providerId);
+        return {
+          ...current,
+          [providerId]: false,
+        };
+      }
+
+      const otherProvider = PROVIDERS.find((provider) => provider.id !== providerId);
+
+      if (!otherProvider || current[otherProvider.id]) {
+        return current;
+      }
+
+      setActiveProviderId(otherProvider.id);
+      return {
+        ...current,
+        [providerId]: true,
+      };
+    });
+  }, []);
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <aside className="sidebar" aria-label="Workspace sidebar">
-        <div className="brand">Omni</div>
+        <div className="sidebar-header">
+          <button
+            className="sidebar-toggle"
+            type="button"
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          >
+            {sidebarCollapsed ? '>' : '<'}
+          </button>
+          <div className="brand">Omni</div>
+        </div>
         <nav className="workspace-list" aria-label="Workspaces">
           {PROVIDERS.map((provider) => (
             <button
               key={provider.id}
               className={`workspace-item ${provider.id === activeProviderId ? 'active' : ''}`}
               type="button"
-              onClick={() => setActiveProviderId(provider.id)}
+              title={provider.label}
+              onClick={() => handleWorkspaceSelect(provider.id)}
             >
-              {provider.label}
+              <span className="workspace-icon" aria-hidden="true">
+                {provider.label[0]}
+              </span>
+              <span className="workspace-label">{provider.label}</span>
             </button>
           ))}
         </nav>
       </aside>
 
       <main className="main-area">
-        <header className="tabbar" aria-label="Provider tabs">
-          {PROVIDERS.map((provider) => (
-            <button
-              key={provider.id}
-              className={`tab ${provider.id === activeProviderId ? 'active' : ''}`}
-              type="button"
-              onClick={() => setActiveProviderId(provider.id)}
-            >
-              <span>{provider.label}</span>
-              <span className={`provider-status ${broadcastStatuses[provider.id].state}`}>
-                {broadcastStatuses[provider.id].message}
-              </span>
-            </button>
-          ))}
-          <div className="layout-toggle" aria-label="Layout mode">
-            <button
-              className={`layout-toggle-button ${layoutMode === 'tabs' ? 'active' : ''}`}
-              type="button"
-              onClick={() => setLayoutMode('tabs')}
-            >
-              탭 보기
-            </button>
-            <button
-              className={`layout-toggle-button ${layoutMode === 'split' ? 'active' : ''}`}
-              type="button"
-              onClick={() => setLayoutMode('split')}
-            >
-              나란히 보기
-            </button>
-          </div>
+        <header className="topbar" aria-label="Workspace status">
+          <div className="topbar-title">Omni Windows</div>
           <div className="session-hint">Persistent session: {activeProvider.partition}</div>
         </header>
 
-        <section
-          className={`webview-panel ${layoutMode === 'split' ? 'split-mode' : 'tab-mode'}`}
-          aria-label={layoutMode === 'split' ? 'Claude and ChatGPT webviews' : `${activeProvider.label} webview`}
-        >
-          {PROVIDERS.map((provider) => (
-            <div
-              key={provider.id}
-              className={`provider-pane ${provider.id === activeProviderId ? 'active' : ''}`}
-            >
-              <webview
-                className="provider-webview"
-                src={initialProviderUrls[provider.id]}
-                partition={provider.partition}
-                allowpopups={true}
-                ref={attachNavigationTracker(provider.id)}
-              />
-            </div>
-          ))}
+        <section className="webview-panel" aria-label="Claude and ChatGPT webviews">
+          {PROVIDERS.map((provider) => {
+            const isCollapsed = collapsedProviders[provider.id];
+            const canCollapse =
+              !isCollapsed && PROVIDERS.some((other) => other.id !== provider.id && !collapsedProviders[other.id]);
+
+            return (
+              <div key={provider.id} className={`provider-pane ${isCollapsed ? 'collapsed' : 'expanded'}`}>
+                <div className="provider-pane-header">
+                  <span className="provider-pane-title">{provider.label}</span>
+                  {!isCollapsed && (
+                    <span className={`provider-status ${broadcastStatuses[provider.id].state}`}>
+                      {broadcastStatuses[provider.id].message}
+                    </span>
+                  )}
+                  <button
+                    className="provider-collapse-button"
+                    type="button"
+                    disabled={!isCollapsed && !canCollapse}
+                    title={isCollapsed ? `Expand ${provider.label}` : `Collapse ${provider.label}`}
+                    aria-label={isCollapsed ? `Expand ${provider.label}` : `Collapse ${provider.label}`}
+                    onClick={() => toggleProviderCollapsed(provider.id)}
+                  >
+                    {isCollapsed ? '>' : '<'}
+                  </button>
+                </div>
+                <webview
+                  className="provider-webview"
+                  src={initialProviderUrls[provider.id]}
+                  partition={provider.partition}
+                  allowpopups={true}
+                  ref={attachNavigationTracker(provider.id)}
+                />
+              </div>
+            );
+          })}
         </section>
 
-        <form className="broadcast-bar" aria-label="Broadcast prompt" onSubmit={handleBroadcastSubmit}>
-          <textarea
-            className="broadcast-input"
-            value={broadcastText}
-            rows={1}
-            placeholder="Send the same message to Claude and ChatGPT"
-            onChange={(event) => setBroadcastText(event.target.value)}
-            onKeyDown={handleBroadcastKeyDown}
-          />
-          <button className="broadcast-button" type="submit" disabled={!broadcastText.trim()}>
-            Send
+        <form
+          className={`broadcast-bar ${broadcastCollapsed ? 'collapsed' : ''}`}
+          aria-label="Broadcast prompt"
+          onSubmit={handleBroadcastSubmit}
+        >
+          <button
+            className="broadcast-toggle"
+            type="button"
+            aria-label={broadcastCollapsed ? 'Expand broadcast bar' : 'Collapse broadcast bar'}
+            onClick={() => setBroadcastCollapsed((collapsed) => !collapsed)}
+          >
+            {broadcastCollapsed ? '^' : 'v'}
           </button>
+          {!broadcastCollapsed && (
+            <>
+              <textarea
+                className="broadcast-input"
+                value={broadcastText}
+                rows={1}
+                placeholder="Send the same message to Claude and ChatGPT"
+                onChange={(event) => setBroadcastText(event.target.value)}
+                onKeyDown={handleBroadcastKeyDown}
+              />
+              <button className="broadcast-button" type="submit" disabled={!broadcastText.trim()}>
+                Send
+              </button>
+            </>
+          )}
         </form>
       </main>
     </div>
