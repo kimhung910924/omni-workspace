@@ -39,11 +39,16 @@ button { font: inherit; }
 }
 
 .workspace-item,
-.tab {
+.tab,
+.layout-toggle-button {
   border: 1px solid transparent;
-  border-radius: 12px;
   color: #d9d0c0;
   background: transparent;
+}
+
+.workspace-item,
+.tab {
+  border-radius: 12px;
 }
 
 .workspace-item {
@@ -52,7 +57,8 @@ button { font: inherit; }
 }
 
 .workspace-item.active,
-.tab.active {
+.tab.active,
+.layout-toggle-button.active {
   color: #ffffff;
   border-color: #4a3728;
   background: #2a211b;
@@ -86,6 +92,22 @@ button { font: inherit; }
   padding: 8px 14px;
 }
 
+.layout-toggle {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid #333333;
+  border-radius: 10px;
+  background: #171717;
+}
+
+.layout-toggle-button {
+  min-width: 88px;
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .session-hint {
   margin-left: auto;
   color: #9d968c;
@@ -115,25 +137,40 @@ button { font: inherit; }
 }
 
 .webview-panel {
-  position: relative;
+  display: flex;
+  gap: 12px;
   min-width: 0;
   min-height: 0;
   padding: 12px;
   background: #101010;
 }
 
-.provider-webview {
+.provider-pane {
+  position: relative;
   display: none;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.webview-panel.tab-mode .provider-pane.active {
+  display: flex;
+  flex: 1 1 100%;
+}
+
+.webview-panel.split-mode .provider-pane {
+  display: flex;
+  flex: 1 1 0;
+}
+
+.provider-webview {
+  display: flex;
   width: 100%;
   height: 100%;
   border: 1px solid #303030;
   border-radius: 14px;
   overflow: hidden;
   background: #ffffff;
-}
-
-.provider-webview.active {
-  display: flex;
 }
 
 .broadcast-bar {

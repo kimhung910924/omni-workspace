@@ -20,6 +20,8 @@ type BroadcastStatus = {
   message: string;
 };
 
+type LayoutMode = 'tabs' | 'split';
+
 const PROVIDERS: Array<{
   id: ProviderId;
   label: string;
@@ -42,6 +44,7 @@ const PROVIDERS: Array<{
 
 function App() {
   const [activeProviderId, setActiveProviderId] = React.useState<ProviderId>('claude');
+  const [layoutMode, setLayoutMode] = React.useState<LayoutMode>('tabs');
   const [broadcastText, setBroadcastText] = React.useState('');
   const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<ProviderId, BroadcastStatus>>({
     claude: { state: 'idle', message: 'Ready' },
@@ -189,19 +192,42 @@ function App() {
               </span>
             </button>
           ))}
+          <div className="layout-toggle" aria-label="Layout mode">
+            <button
+              className={`layout-toggle-button ${layoutMode === 'tabs' ? 'active' : ''}`}
+              type="button"
+              onClick={() => setLayoutMode('tabs')}
+            >
+              탭 보기
+            </button>
+            <button
+              className={`layout-toggle-button ${layoutMode === 'split' ? 'active' : ''}`}
+              type="button"
+              onClick={() => setLayoutMode('split')}
+            >
+              나란히 보기
+            </button>
+          </div>
           <div className="session-hint">Persistent session: {activeProvider.partition}</div>
         </header>
 
-        <section className="webview-panel" aria-label={`${activeProvider.label} webview`}>
+        <section
+          className={`webview-panel ${layoutMode === 'split' ? 'split-mode' : 'tab-mode'}`}
+          aria-label={layoutMode === 'split' ? 'Claude and ChatGPT webviews' : `${activeProvider.label} webview`}
+        >
           {PROVIDERS.map((provider) => (
-            <webview
+            <div
               key={provider.id}
-              className={`provider-webview ${provider.id === activeProviderId ? 'active' : ''}`}
-              src={initialProviderUrls[provider.id]}
-              partition={provider.partition}
-              allowpopups={true}
-              ref={attachNavigationTracker(provider.id)}
-            />
+              className={`provider-pane ${provider.id === activeProviderId ? 'active' : ''}`}
+            >
+              <webview
+                className="provider-webview"
+                src={initialProviderUrls[provider.id]}
+                partition={provider.partition}
+                allowpopups={true}
+                ref={attachNavigationTracker(provider.id)}
+              />
+            </div>
           ))}
         </section>
 
