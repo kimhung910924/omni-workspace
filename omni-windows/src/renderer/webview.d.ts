@@ -6,7 +6,7 @@ declare global {
       webview: DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLElement> & {
         src?: string;
         partition?: string;
-        allowpopups?: string;
+        allowpopups?: boolean;
       };
     }
   }

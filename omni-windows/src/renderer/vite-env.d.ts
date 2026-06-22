@@ -3,5 +3,6 @@
 interface Window {
   omni?: {
     claudePartition: string;
+    chatgptPartition: string;
   };
 }
