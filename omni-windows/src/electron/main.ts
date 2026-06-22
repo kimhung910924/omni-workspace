@@ -14,7 +14,7 @@ function createMainWindow(): void {
     minHeight: 640,
     title: 'Omni Workspace',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,

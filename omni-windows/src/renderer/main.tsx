@@ -1,17 +1,23 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './styles.css';
+import { providerAdapters, type ProviderWebview, type SendResult } from './providerAdapters';
 import { getInitialProviderUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
 
 type WebviewNavigationEvent = Event & {
   url?: string;
 };
 
-type ProviderWebview = HTMLElement & {
+type TrackedProviderWebview = ProviderWebview & {
   getURL?: () => string;
   dataset: DOMStringMap & {
     omniTrackedProvider?: ProviderId;
   };
+};
+
+type BroadcastStatus = {
+  state: 'idle' | 'pending' | 'sent' | 'failed';
+  message: string;
 };
 
 const PROVIDERS: Array<{
@@ -36,6 +42,12 @@ const PROVIDERS: Array<{
 
 function App() {
   const [activeProviderId, setActiveProviderId] = React.useState<ProviderId>('claude');
+  const [broadcastText, setBroadcastText] = React.useState('');
+  const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<ProviderId, BroadcastStatus>>({
+    claude: { state: 'idle', message: 'Ready' },
+    chatgpt: { state: 'idle', message: 'Ready' },
+  });
+  const webviewRefs = React.useRef<Partial<Record<ProviderId, ProviderWebview>>>({});
   const activeProvider = PROVIDERS.find((provider) => provider.id === activeProviderId) ?? PROVIDERS[0];
   const initialProviderUrls = React.useMemo(
     () =>
@@ -49,10 +61,13 @@ function App() {
   );
 
   const attachNavigationTracker = React.useCallback(
-    (providerId: ProviderId) => (webview: ProviderWebview | null) => {
+    (providerId: ProviderId) => (webview: TrackedProviderWebview | null) => {
       if (!webview) {
+        delete webviewRefs.current[providerId];
         return;
       }
+
+      webviewRefs.current[providerId] = webview;
 
       if (webview.dataset.omniTrackedProvider === providerId) {
         return;
@@ -71,6 +86,74 @@ function App() {
       webview.dataset.omniTrackedProvider = providerId;
     },
     [],
+  );
+
+  const handleBroadcastSubmit = React.useCallback(
+    async (event?: React.FormEvent<HTMLFormElement>) => {
+      event?.preventDefault();
+
+      if (!broadcastText.trim()) {
+        return;
+      }
+
+      const messageText = broadcastText;
+
+      setBroadcastStatuses({
+        claude: { state: 'pending', message: 'Sending...' },
+        chatgpt: { state: 'pending', message: 'Sending...' },
+      });
+
+      const settledResults = await Promise.allSettled(
+        PROVIDERS.map(async (provider): Promise<SendResult> => {
+          const webview = webviewRefs.current[provider.id];
+
+          if (!webview) {
+            console.warn('[Omni broadcast]', provider.label, 'webview ref missing');
+            return {
+              ok: false,
+              providerId: provider.id,
+              message: 'webview not ready',
+            };
+          }
+
+          return providerAdapters[provider.id].sendMessage(webview, messageText);
+        }),
+      );
+
+      const nextStatuses = { ...broadcastStatuses };
+
+      settledResults.forEach((result, index) => {
+        const provider = PROVIDERS[index];
+
+        if (result.status === 'rejected') {
+          const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+          console.error('[Omni broadcast]', provider.label, reason);
+          nextStatuses[provider.id] = { state: 'failed', message: reason };
+          return;
+        }
+
+        nextStatuses[provider.id] = {
+          state: result.value.ok ? 'sent' : 'failed',
+          message: result.value.message,
+        };
+      });
+
+      setBroadcastStatuses(nextStatuses);
+      setBroadcastText('');
+    },
+    [broadcastStatuses, broadcastText],
+  );
+
+  const handleBroadcastKeyDown = React.useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key !== 'Enter' || event.shiftKey) {
+        return;
+      }
+
+      event.preventDefault();
+      void handleBroadcastSubmit();
+    },
+    [handleBroadcastSubmit],
   );
 
   return (
@@ -100,7 +183,10 @@ function App() {
               type="button"
               onClick={() => setActiveProviderId(provider.id)}
             >
-              {provider.label}
+              <span>{provider.label}</span>
+              <span className={`provider-status ${broadcastStatuses[provider.id].state}`}>
+                {broadcastStatuses[provider.id].message}
+              </span>
             </button>
           ))}
           <div className="session-hint">Persistent session: {activeProvider.partition}</div>
@@ -118,6 +204,20 @@ function App() {
             />
           ))}
         </section>
+
+        <form className="broadcast-bar" aria-label="Broadcast prompt" onSubmit={handleBroadcastSubmit}>
+          <textarea
+            className="broadcast-input"
+            value={broadcastText}
+            rows={1}
+            placeholder="Send the same message to Claude and ChatGPT"
+            onChange={(event) => setBroadcastText(event.target.value)}
+            onKeyDown={handleBroadcastKeyDown}
+          />
+          <button className="broadcast-button" type="submit" disabled={!broadcastText.trim()}>
+            Send
+          </button>
+        </form>
       </main>
     </div>
   );

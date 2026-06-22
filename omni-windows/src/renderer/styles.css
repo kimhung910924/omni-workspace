@@ -65,7 +65,7 @@ button { font: inherit; }
 
 .main-area {
   display: grid;
-  grid-template-rows: 56px minmax(0, 1fr);
+  grid-template-rows: 56px minmax(0, 1fr) auto;
   min-width: 0;
 }
 
@@ -79,13 +79,39 @@ button { font: inherit; }
 }
 
 .tab {
-  padding: 8px 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 128px;
+  padding: 8px 14px;
 }
 
 .session-hint {
   margin-left: auto;
   color: #9d968c;
   font-size: 13px;
+}
+
+.provider-status {
+  max-width: 120px;
+  overflow: hidden;
+  color: #9d968c;
+  font-size: 11px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-status.pending {
+  color: #d6b96f;
+}
+
+.provider-status.sent {
+  color: #8ecf9b;
+}
+
+.provider-status.failed {
+  color: #e58c84;
 }
 
 .webview-panel {
@@ -108,4 +134,71 @@ button { font: inherit; }
 
 .provider-webview.active {
   display: flex;
+}
+
+.broadcast-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid #2a2a2a;
+  background: #1b1b1b;
+}
+
+.broadcast-input {
+  width: 100%;
+  min-height: 44px;
+  max-height: 112px;
+  resize: vertical;
+  border: 1px solid #393939;
+  border-radius: 8px;
+  padding: 11px 12px;
+  color: #f7f3ea;
+  background: #121212;
+  font: inherit;
+  line-height: 1.4;
+  scrollbar-color: #6f6257 #171717;
+  scrollbar-width: thin;
+}
+
+.broadcast-input:focus {
+  border-color: #7a614f;
+  outline: none;
+}
+
+.broadcast-input::-webkit-scrollbar {
+  width: 8px;
+}
+
+.broadcast-input::-webkit-scrollbar-track {
+  border-radius: 8px;
+  background: #171717;
+}
+
+.broadcast-input::-webkit-scrollbar-thumb {
+  border: 2px solid #171717;
+  border-radius: 8px;
+  background: #6f6257;
+}
+
+.broadcast-input::-webkit-scrollbar-thumb:hover {
+  background: #8a7768;
+}
+
+.broadcast-button {
+  min-width: 88px;
+  height: 44px;
+  align-self: end;
+  border: 1px solid #5c4535;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #6a4b35;
+  font-weight: 700;
+}
+
+.broadcast-button:disabled {
+  border-color: #333333;
+  color: #77716a;
+  background: #242424;
+  cursor: not-allowed;
 }
