@@ -1,0 +1,106 @@
+:root {
+  color: #f7f3ea;
+  background: #151515;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; }
+button { font: inherit; }
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #191919;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 24px 18px;
+  border-right: 1px solid #2a2a2a;
+  background: linear-gradient(180deg, #202020 0%, #171717 100%);
+}
+
+.brand {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-item,
+.tab {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: #d9d0c0;
+  background: transparent;
+}
+
+.workspace-item {
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.workspace-item.active,
+.tab.active {
+  color: #ffffff;
+  border-color: #4a3728;
+  background: #2a211b;
+}
+
+.workspace-item:disabled {
+  color: #706c65;
+  cursor: not-allowed;
+}
+
+.main-area {
+  display: grid;
+  grid-template-rows: 56px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.tabbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #2a2a2a;
+  background: #1f1f1f;
+}
+
+.tab {
+  padding: 8px 18px;
+}
+
+.session-hint {
+  margin-left: auto;
+  color: #9d968c;
+  font-size: 13px;
+}
+
+.webview-panel {
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  background: #101010;
+}
+
+.provider-webview {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  border: 1px solid #303030;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #ffffff;
+}
