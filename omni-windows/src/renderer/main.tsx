@@ -185,6 +185,7 @@ function App() {
   const webviewRefs = React.useRef<Partial<Record<string, ProviderWebview>>>({});
   const webviewReadyRef = React.useRef<Partial<Record<string, boolean>>>({});
   const webviewRefCallbacks = React.useRef<Partial<Record<string, (webview: TrackedProviderWebview | null) => void>>>({});
+  const draggedIdRef = React.useRef<string | null>(null);
   const slotsById = React.useMemo(() => new Map(slots.map((slot) => [slot.id, slot])), [slots]);
   const stageSlots = React.useMemo(() => stageIds.map((slotId) => slotsById.get(slotId)).filter(Boolean) as Slot[], [slotsById, stageIds]);
   const dockSlots = React.useMemo(() => dockIds.map((slotId) => slotsById.get(slotId)).filter(Boolean) as Slot[], [dockIds, slotsById]);
@@ -467,26 +468,125 @@ function App() {
     [handleBroadcastSubmit],
   );
 
+  const moveSlotToPosition = React.useCallback(
+    (id: string, destArrName: 'stage' | 'dock', targetId: string | null, side: 'before' | 'after' | null) => {
+      if (!slotsById.has(id)) {
+        return;
+      }
+
+      if (targetId === id) {
+        return;
+      }
+
+      const stageWithoutDragged = stageIds.filter((slotId) => slotId !== id);
+      const dockWithoutDragged = dockIds.filter((slotId) => slotId !== id);
+      const destArr = destArrName === 'stage' ? [...stageWithoutDragged] : [...dockWithoutDragged];
+      const targetIndex = targetId ? destArr.indexOf(targetId) : -1;
+      const insertIdx = targetIndex >= 0 ? targetIndex + (side === 'after' ? 1 : 0) : destArr.length;
+
+      destArr.splice(insertIdx, 0, id);
+
+      let nextStageIds = destArrName === 'stage' ? destArr : stageWithoutDragged;
+      let nextDockIds = destArrName === 'dock' ? destArr : dockWithoutDragged;
+
+      if (destArrName === 'stage' && nextStageIds.length > MAX_STAGE_SLOTS) {
+        let evictionIndex = nextStageIds.length - 1;
+
+        if (evictionIndex === insertIdx) {
+          evictionIndex = nextStageIds.length - 2;
+        }
+
+        const [evictedSlotId] = nextStageIds.splice(evictionIndex, 1);
+
+        if (evictedSlotId) {
+          nextDockIds = [...nextDockIds, evictedSlotId];
+        }
+      }
+
+      setStageIds(nextStageIds);
+      setDockIds(nextDockIds);
+
+      if (destArrName === 'stage') {
+        setActiveSlotId(id);
+        setMemoPanelOpen(false);
+      } else if (activeSlotId === id) {
+        setActiveSlotId(nextStageIds[0] ?? nextDockIds[0] ?? id);
+      }
+    },
+    [activeSlotId, dockIds, slotsById, stageIds],
+  );
+
+  const getDropSide = React.useCallback((event: React.DragEvent<HTMLElement>): 'before' | 'after' => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+  }, []);
+
+  const handleSlotDragStart = React.useCallback((slotId: string, event: React.DragEvent<HTMLElement>) => {
+    draggedIdRef.current = slotId;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', slotId);
+  }, []);
+
+  const handleSlotDragEnd = React.useCallback(() => {
+    draggedIdRef.current = null;
+  }, []);
+
+  const handleSlotDragOver = React.useCallback((event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const handleSlotDrop = React.useCallback(
+    (destArrName: 'stage' | 'dock', targetId: string, event: React.DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const draggedId = draggedIdRef.current || event.dataTransfer.getData('text/plain');
+
+      if (!draggedId) {
+        return;
+      }
+
+      moveSlotToPosition(draggedId, destArrName, targetId, getDropSide(event));
+      draggedIdRef.current = null;
+    },
+    [getDropSide, moveSlotToPosition],
+  );
+
+  const handleContainerDragOver = React.useCallback((event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const handleContainerDrop = React.useCallback(
+    (destArrName: 'stage' | 'dock', event: React.DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const draggedId = draggedIdRef.current || event.dataTransfer.getData('text/plain');
+
+      if (!draggedId) {
+        return;
+      }
+
+      moveSlotToPosition(draggedId, destArrName, null, null);
+      draggedIdRef.current = null;
+    },
+    [moveSlotToPosition],
+  );
+
   const moveSlotToStage = React.useCallback((slotId: string) => {
     setMemoPanelOpen(false);
     setActiveSlotId(slotId);
 
-    if (!dockIds.includes(slotId) || stageIds.includes(slotId)) {
+    if (stageIds.includes(slotId)) {
       return;
     }
 
-    const nextDockIds = dockIds.filter((currentSlotId) => currentSlotId !== slotId);
-
-    if (stageIds.length >= MAX_STAGE_SLOTS) {
-      const evictedSlotId = stageIds[stageIds.length - 1];
-      setStageIds([...stageIds.slice(0, MAX_STAGE_SLOTS - 1), slotId]);
-      setDockIds([...nextDockIds, evictedSlotId]);
-      return;
-    }
-
-    setStageIds([...stageIds, slotId]);
-    setDockIds(nextDockIds);
-  }, [dockIds, stageIds]);
+    moveSlotToPosition(slotId, 'stage', null, null);
+  }, [moveSlotToPosition, stageIds]);
 
   const handleWorkspaceSelect = React.useCallback((slotId: string) => {
     if (dockIds.includes(slotId)) {
@@ -503,8 +603,7 @@ function App() {
       return;
     }
 
-    setStageIds((currentStageIds) => currentStageIds.filter((currentSlotId) => currentSlotId !== slotId));
-    setDockIds((currentDockIds) => (currentDockIds.includes(slotId) ? currentDockIds : [...currentDockIds, slotId]));
+    moveSlotToPosition(slotId, 'dock', null, null);
     setActiveSlotId((currentActiveSlotId) => {
       if (currentActiveSlotId !== slotId) {
         return currentActiveSlotId;
@@ -513,7 +612,7 @@ function App() {
       const nextStageSlotId = stageIds.find((currentSlotId) => currentSlotId !== slotId);
       return nextStageSlotId ?? dockIds[0] ?? currentActiveSlotId;
     });
-  }, [dockIds, stageIds]);
+  }, [dockIds, moveSlotToPosition, stageIds]);
 
   const closeSlot = React.useCallback((slotId: string) => {
     delete webviewRefs.current[slotId];
@@ -862,7 +961,12 @@ function App() {
                   </button>
                 )}
               </div>
-              <div className={`stage-grid ${isStageGrid ? 'grid2x2' : 'row'}`} style={stageGridStyle}>
+              <div
+                className={`stage-grid ${isStageGrid ? 'grid2x2' : 'row'}`}
+                style={stageGridStyle}
+                onDragOver={handleContainerDragOver}
+                onDrop={(event) => handleContainerDrop('stage', event)}
+              >
                 {stageIds.length === 0 && <div className="stage-empty">Open a docked slot to start.</div>}
                 {slots.map((slot) => {
                   const provider = getProviderConfig(slot.providerId);
@@ -878,6 +982,11 @@ function App() {
                     <div
                       key={slot.id}
                       className="provider-pane expanded"
+                      draggable={isInStage}
+                      onDragStart={(event) => handleSlotDragStart(slot.id, event)}
+                      onDragEnd={handleSlotDragEnd}
+                      onDragOver={handleSlotDragOver}
+                      onDrop={(event) => handleSlotDrop('stage', slot.id, event)}
                       style={{ display: isInStage ? undefined : 'none', order: isInStage ? stageIndex : undefined }}
                     >
                       <SlotHeader
@@ -923,7 +1032,12 @@ function App() {
                 ^
               </button>
             )}
-            <section className={`dock ${dockMinimized ? 'minimized' : ''}`} aria-label="Dock">
+            <section
+              className={`dock ${dockMinimized ? 'minimized' : ''}`}
+              aria-label="Dock"
+              onDragOver={handleContainerDragOver}
+              onDrop={(event) => handleContainerDrop('dock', event)}
+            >
             <div className="dock-header">
               <div className="dock-title-row">
                 <button
@@ -948,7 +1062,12 @@ function App() {
                     key={slot.id}
                     className="dock-chip"
                     type="button"
+                    draggable
                     title={`${provider.label} - ${slot.title}`}
+                    onDragStart={(event) => handleSlotDragStart(slot.id, event)}
+                    onDragEnd={handleSlotDragEnd}
+                    onDragOver={handleSlotDragOver}
+                    onDrop={(event) => handleSlotDrop('dock', slot.id, event)}
                     onClick={() => moveSlotToStage(slot.id)}
                   >
                     <ProviderIcon providerId={slot.providerId} label={provider.label} />
