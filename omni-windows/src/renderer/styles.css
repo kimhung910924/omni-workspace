@@ -139,6 +139,7 @@ button { font: inherit; }
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr) auto;
   min-width: 0;
+  position: relative;
 }
 
 .topbar {
@@ -346,4 +347,240 @@ button { font: inherit; }
   color: #77716a;
   background: #242424;
   cursor: not-allowed;
+}
+
+.memo-panel {
+  position: absolute;
+  top: 52px;
+  right: 12px;
+  bottom: 72px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(420px, calc(100% - 24px));
+  min-height: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid #343434;
+  border-radius: 8px;
+  color: #f7f3ea;
+  background: #181818;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  scrollbar-color: #6f6257 #171717;
+  scrollbar-width: thin;
+}
+
+.memo-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memo-panel-header h2,
+.memo-section h3 {
+  margin: 0;
+  color: #ffffff;
+  letter-spacing: 0;
+}
+
+.memo-panel-header h2 {
+  font-size: 18px;
+}
+
+.memo-section h3 {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.memo-close-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #3a332e;
+  border-radius: 8px;
+  color: #efe7d9;
+  background: #25211e;
+  font-weight: 800;
+}
+
+.memo-search,
+.manual-memo-input,
+.memo-title-input,
+.memo-content-input {
+  width: 100%;
+  border: 1px solid #393939;
+  border-radius: 8px;
+  color: #f7f3ea;
+  background: #101010;
+  font: inherit;
+}
+
+.memo-search,
+.memo-title-input {
+  height: 38px;
+  padding: 0 10px;
+}
+
+.manual-memo-input,
+.memo-content-input {
+  resize: vertical;
+  padding: 10px;
+  line-height: 1.45;
+}
+
+.memo-search:focus,
+.manual-memo-input:focus,
+.memo-title-input:focus,
+.memo-content-input:focus {
+  border-color: #7a614f;
+  outline: none;
+}
+
+.manual-memo-save {
+  height: 38px;
+  border: 1px solid #5c4535;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #6a4b35;
+  font-weight: 700;
+}
+
+.manual-memo-save:disabled {
+  border-color: #333333;
+  color: #77716a;
+  background: #242424;
+}
+
+.memo-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #303030;
+  border-radius: 8px;
+  background: #202020;
+}
+
+.memo-card.clickable {
+  cursor: pointer;
+}
+
+.memo-card.clickable:hover {
+  border-color: #5b4a3e;
+  background: #24211f;
+}
+
+.memo-card-meta,
+.memo-actions,
+.memo-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.memo-card-meta {
+  justify-content: space-between;
+  color: #9d968c;
+  font-size: 11px;
+}
+
+.memo-provider {
+  overflow: hidden;
+  max-width: 160px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #4b3b30;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memo-provider.chatgpt {
+  background: #2e5c4f;
+}
+
+.memo-provider.manual {
+  background: #38495d;
+}
+
+.memo-title-button {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  color: #ffffff;
+  background: transparent;
+  font-weight: 800;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memo-preview {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: #ddd5c8;
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.memo-source {
+  overflow: hidden;
+  color: #9d968c;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memo-actions {
+  flex-wrap: wrap;
+}
+
+.memo-action-button {
+  min-height: 28px;
+  border: 1px solid #3a332e;
+  border-radius: 7px;
+  color: #efe7d9;
+  background: #25211e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.memo-action-button.primary {
+  border-color: #5c4535;
+  color: #ffffff;
+  background: #6a4b35;
+}
+
+.memo-action-button.danger {
+  color: #ffd7d2;
+  border-color: #5a302d;
+  background: #33201f;
+}
+
+.memo-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memo-empty {
+  margin: 0;
+  color: #8e877d;
+  font-size: 13px;
 }

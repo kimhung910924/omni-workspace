@@ -50,6 +50,11 @@ function createMainWindow(): void {
 app.whenReady().then(() => {
   // Configure persistent provider sessions before any webContents are created.
   configureProviderUserAgents();
+  app.on('web-contents-created', (_event, contents) => {
+    contents.on('will-attach-webview', (_attachEvent, webPreferences) => {
+      webPreferences.preload = path.join(__dirname, 'webviewCapture.cjs');
+    });
+  });
   createMainWindow();
 
   app.on('activate', () => {

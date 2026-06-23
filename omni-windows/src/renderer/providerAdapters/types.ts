@@ -2,6 +2,7 @@ import type { ProviderId } from '../providerUrlStore';
 
 export type ProviderWebview = HTMLElement & {
   executeJavaScript?: <T = unknown>(code: string, userGesture?: boolean) => Promise<T>;
+  loadURL?: (url: string) => void;
   isLoading?: () => boolean;
 };
 
