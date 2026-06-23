@@ -8,6 +8,8 @@ import type { Memo } from './features/memos/types';
 
 type WebviewNavigationEvent = Event & {
   url?: string;
+  errorCode?: number;
+  isMainFrame?: boolean;
 };
 
 type WebviewIpcMessageEvent = Event & {
@@ -57,6 +59,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   chatgpt: 'ChatGPT',
 };
 
+const LOAD_FAILURE_MESSAGE = '삭제되었거나 접근할 수 없는 대화방입니다. 메모는 그대로 보관됩니다.';
+
 function formatMemoDate(value: number): string {
   return new Intl.DateTimeFormat('ko-KR', {
     month: 'short',
@@ -67,7 +71,26 @@ function formatMemoDate(value: number): string {
 }
 
 function getMemoProviderLabel(memo: Memo): string {
-  return memo.provider ? PROVIDER_LABELS[memo.provider] : '직접 메모';
+  if (memo.provider === 'gemini') {
+    return 'Gemini';
+  }
+
+  return memo.provider ? PROVIDER_LABELS[memo.provider] : 'Private';
+}
+
+function getMemoDisplayTitle(memo: Memo): string {
+  const title = memo.title.trim();
+
+  if (title) {
+    return title;
+  }
+
+  const contentTitle = memo.content.split(/\r?\n/).find(Boolean)?.trim().slice(0, 40);
+  return contentTitle || '새 메모';
+}
+
+function isNavigableProvider(provider: Memo['provider']): provider is ProviderId {
+  return provider === 'claude' || provider === 'chatgpt';
 }
 
 function getSourceHint(memo: Memo): string {
@@ -92,11 +115,12 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [memoPanelOpen, setMemoPanelOpen] = React.useState(false);
   const [memoSearch, setMemoSearch] = React.useState('');
-  const [manualMemoTitle, setManualMemoTitle] = React.useState('');
   const [manualMemoText, setManualMemoText] = React.useState('');
   const [editingMemoId, setEditingMemoId] = React.useState<string | null>(null);
   const [editingTitle, setEditingTitle] = React.useState('');
   const [editingContent, setEditingContent] = React.useState('');
+  const [selectedMemoId, setSelectedMemoId] = React.useState<string | null>(null);
+  const [navigationNotice, setNavigationNotice] = React.useState('');
   const [memos, setMemos] = React.useState<Memo[]>(() => loadMemos());
   const [webviewCapturePreloadUrl, setWebviewCapturePreloadUrl] = React.useState<string | null>(null);
   const [collapsedProviders, setCollapsedProviders] = React.useState<Record<ProviderId, boolean>>({
@@ -166,6 +190,7 @@ function App() {
 
   const pinnedMemos = sortedMemos.filter((memo) => memo.pinned);
   const unpinnedMemos = sortedMemos.filter((memo) => !memo.pinned);
+  const selectedMemo = selectedMemoId ? (memos.find((memo) => memo.id === selectedMemoId) ?? null) : null;
 
   const attachNavigationTracker = React.useCallback(
     (providerId: ProviderId) => (webview: TrackedProviderWebview | null) => {
@@ -187,6 +212,13 @@ function App() {
 
         webview.addEventListener('did-navigate', saveCurrentUrl);
         webview.addEventListener('did-navigate-in-page', saveCurrentUrl);
+        webview.addEventListener('did-fail-load', (event: WebviewNavigationEvent) => {
+          if (event.isMainFrame === false || event.errorCode === -3) {
+            return;
+          }
+
+          setNavigationNotice(LOAD_FAILURE_MESSAGE);
+        });
         webview.dataset.omniTrackedProvider = providerId;
       }
 
@@ -308,7 +340,7 @@ function App() {
 
     setMemos((currentMemos) => [
       createMemo({
-        title: manualMemoTitle,
+        title: '',
         content,
         provider: null,
         sourceUrl: null,
@@ -316,18 +348,32 @@ function App() {
       }),
       ...currentMemos,
     ]);
-    setManualMemoTitle('');
     setManualMemoText('');
-  }, [manualMemoText, manualMemoTitle]);
+  }, [manualMemoText]);
 
   const updateMemo = React.useCallback((memoId: string, updater: (memo: Memo) => Memo) => {
     setMemos((currentMemos) => currentMemos.map((memo) => (memo.id === memoId ? updater(memo) : memo)));
   }, []);
 
   const startEditingMemo = React.useCallback((memo: Memo) => {
+    setSelectedMemoId(memo.id);
     setEditingMemoId(memo.id);
     setEditingTitle(memo.title);
     setEditingContent(memo.content);
+  }, []);
+
+  const openMemoDetail = React.useCallback((memo: Memo) => {
+    setSelectedMemoId(memo.id);
+    setEditingMemoId(null);
+    setEditingTitle(memo.title);
+    setEditingContent(memo.content);
+  }, []);
+
+  const closeMemoDetail = React.useCallback(() => {
+    setSelectedMemoId(null);
+    setEditingMemoId(null);
+    setEditingTitle('');
+    setEditingContent('');
   }, []);
 
   const saveEditedMemo = React.useCallback(() => {
@@ -338,7 +384,7 @@ function App() {
     const title = editingTitle.trim();
     const content = editingContent.trim();
 
-    if (!title || !content) {
+    if (!content) {
       return;
     }
 
@@ -349,8 +395,6 @@ function App() {
       updatedAt: Date.now(),
     }));
     setEditingMemoId(null);
-    setEditingTitle('');
-    setEditingContent('');
   }, [editingContent, editingMemoId, editingTitle, updateMemo]);
 
   const deleteMemo = React.useCallback((memoId: string) => {
@@ -359,6 +403,8 @@ function App() {
     }
 
     setMemos((currentMemos) => currentMemos.filter((memo) => memo.id !== memoId));
+    setSelectedMemoId((currentMemoId) => (currentMemoId === memoId ? null : currentMemoId));
+    setEditingMemoId((currentMemoId) => (currentMemoId === memoId ? null : currentMemoId));
   }, []);
 
   const copyMemo = React.useCallback(async (content: string) => {
@@ -366,72 +412,68 @@ function App() {
   }, []);
 
   const navigateToMemoSource = React.useCallback((memo: Memo) => {
-    if (!memo.provider || !memo.sourceUrl) {
+    if (!isNavigableProvider(memo.provider) || !memo.sourceUrl) {
       return;
     }
 
-    setActiveProviderId(memo.provider);
+    const providerId = memo.provider;
+
+    setActiveProviderId(providerId);
     setMemoPanelOpen(false);
+    setNavigationNotice('');
+    closeMemoDetail();
     setCollapsedProviders((current) => ({
       ...current,
-      [memo.provider as ProviderId]: false,
+      [providerId]: false,
     }));
-    webviewRefs.current[memo.provider]?.loadURL?.(memo.sourceUrl);
+    webviewRefs.current[providerId]?.loadURL?.(memo.sourceUrl);
+  }, [closeMemoDetail]);
+
+  const duplicateMemo = React.useCallback((memo: Memo, titleValue = memo.title, contentValue = memo.content) => {
+    const now = Date.now();
+    const title = titleValue.trim() ? `${titleValue.trim()} 복사본` : '';
+
+    setMemos((currentMemos) => [
+      {
+        ...memo,
+        id: crypto.randomUUID(),
+        title,
+        content: contentValue.trim(),
+        createdAt: now,
+        updatedAt: now,
+      },
+      ...currentMemos,
+    ]);
   }, []);
 
   const renderMemoCard = (memo: Memo) => {
-    const isEditing = editingMemoId === memo.id;
     const sourceHint = getSourceHint(memo);
 
     return (
       <article
         key={memo.id}
-        className={`memo-card provider-${memo.provider ?? 'manual'} ${memo.provider && memo.sourceUrl ? 'clickable' : ''}`}
-        onClick={() => navigateToMemoSource(memo)}
+        className={`memo-card provider-${memo.provider ?? 'manual'}`}
+        tabIndex={0}
+        onClick={() => openMemoDetail(memo)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openMemoDetail(memo);
+          }
+        }}
       >
         <div className="memo-card-meta">
           <span className={`memo-provider ${memo.provider ?? 'manual'}`}>{getMemoProviderLabel(memo)}</span>
-          <span>{formatMemoDate(memo.createdAt)}</span>
         </div>
 
-        {isEditing ? (
-          <div className="memo-edit-form" onClick={(event) => event.stopPropagation()}>
-            <input
-              className="memo-title-input"
-              value={editingTitle}
-              onChange={(event) => setEditingTitle(event.target.value)}
-            />
-            <textarea
-              className="memo-content-input"
-              value={editingContent}
-              rows={5}
-              onChange={(event) => setEditingContent(event.target.value)}
-            />
-            <div className="memo-edit-actions">
-              <button className="memo-action-button primary" type="button" onClick={saveEditedMemo}>
-                저장
-              </button>
-              <button className="memo-action-button" type="button" onClick={() => setEditingMemoId(null)}>
-                취소
-              </button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <button
-              className="memo-title-button"
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                startEditingMemo(memo);
-              }}
-            >
-              {memo.title}
-            </button>
-            <p className="memo-preview">{memo.content}</p>
-            {sourceHint && <div className="memo-source">{sourceHint}</div>}
-          </>
-        )}
+        <div className="memo-card-body">
+          <h4>{getMemoDisplayTitle(memo)}</h4>
+          <p className="memo-preview">{memo.content}</p>
+        </div>
+        <div className="memo-card-footer">
+          {sourceHint && <span className="memo-source">{sourceHint}</span>}
+          <span>{formatMemoDate(memo.createdAt)}</span>
+        </div>
 
         <div className="memo-actions" onClick={(event) => event.stopPropagation()}>
           <button
@@ -557,6 +599,15 @@ function App() {
           <div className="session-hint">Persistent session: {activeProvider.partition}</div>
         </header>
 
+        {navigationNotice && (
+          <div className="memo-notice" role="status">
+            <span>{navigationNotice}</span>
+            <button type="button" onClick={() => setNavigationNotice('')}>
+              닫기
+            </button>
+          </div>
+        )}
+
         <section
           className={`webview-panel ${memoPanelOpen ? 'view-hidden' : ''}`}
           aria-label="Claude and ChatGPT webviews"
@@ -646,12 +697,6 @@ function App() {
             </div>
 
             <div className="manual-memo-composer">
-              <input
-                className="manual-memo-title"
-                value={manualMemoTitle}
-                placeholder="제목"
-                onChange={(event) => setManualMemoTitle(event.target.value)}
-              />
               <textarea
                 className="manual-memo-input"
                 value={manualMemoText}
@@ -688,6 +733,111 @@ function App() {
             </div>
           </div>
         </section>
+
+        {selectedMemo && (
+          <div className="memo-modal-backdrop" role="presentation" onMouseDown={closeMemoDetail}>
+            <section
+              className={`memo-modal provider-${selectedMemo.provider ?? 'manual'}`}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="memo-modal-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <header className="memo-modal-header">
+                <div className="memo-modal-title-group">
+                  <span className={`memo-provider ${selectedMemo.provider ?? 'manual'}`}>{getMemoProviderLabel(selectedMemo)}</span>
+                  {editingMemoId === selectedMemo.id ? (
+                    <input
+                      className="memo-title-input"
+                      value={editingTitle}
+                      placeholder="제목"
+                      onChange={(event) => setEditingTitle(event.target.value)}
+                    />
+                  ) : (
+                    <h2 id="memo-modal-title">{getMemoDisplayTitle(selectedMemo)}</h2>
+                  )}
+                </div>
+                <button className="memo-modal-close" type="button" aria-label="닫기" onClick={closeMemoDetail}>
+                  x
+                </button>
+              </header>
+
+              <div className="memo-modal-body">
+                {editingMemoId === selectedMemo.id ? (
+                  <textarea
+                    className="memo-modal-content-input"
+                    value={editingContent}
+                    rows={12}
+                    onChange={(event) => setEditingContent(event.target.value)}
+                  />
+                ) : (
+                  <p className="memo-modal-content">{selectedMemo.content}</p>
+                )}
+                {getSourceHint(selectedMemo) && <div className="memo-modal-source">{getSourceHint(selectedMemo)}</div>}
+              </div>
+
+              <footer className="memo-modal-footer">
+                <div className="memo-modal-dates">
+                  <span>생성: {formatMemoDate(selectedMemo.createdAt)}</span>
+                  <span>수정: {formatMemoDate(selectedMemo.updatedAt)}</span>
+                </div>
+                <div className="memo-modal-actions">
+                  <button
+                    className="memo-action-button"
+                    type="button"
+                    onClick={() =>
+                      updateMemo(selectedMemo.id, (currentMemo) => ({
+                        ...currentMemo,
+                        pinned: !currentMemo.pinned,
+                        updatedAt: Date.now(),
+                      }))
+                    }
+                  >
+                    {selectedMemo.pinned ? 'Unpin' : 'Pin'}
+                  </button>
+                  <button className="memo-action-button" type="button" onClick={() => void copyMemo(selectedMemo.content)}>
+                    Copy
+                  </button>
+                  {editingMemoId === selectedMemo.id ? (
+                    <>
+                      <button className="memo-action-button primary" type="button" onClick={saveEditedMemo}>
+                        저장
+                      </button>
+                      <button className="memo-action-button" type="button" onClick={() => setEditingMemoId(null)}>
+                        취소
+                      </button>
+                    </>
+                  ) : (
+                    <button className="memo-action-button" type="button" onClick={() => startEditingMemo(selectedMemo)}>
+                      Edit
+                    </button>
+                  )}
+                  <button
+                    className="memo-action-button"
+                    type="button"
+                    onClick={() =>
+                      duplicateMemo(
+                        selectedMemo,
+                        editingMemoId === selectedMemo.id ? editingTitle : selectedMemo.title,
+                        editingMemoId === selectedMemo.id ? editingContent : selectedMemo.content,
+                      )
+                    }
+                  >
+                    다른 이름으로 저장
+                  </button>
+                  {isNavigableProvider(selectedMemo.provider) && selectedMemo.sourceUrl && (
+                    <button className="memo-action-button primary" type="button" onClick={() => navigateToMemoSource(selectedMemo)}>
+                      채팅방으로 이동
+                    </button>
+                  )}
+                  <button className="memo-action-button danger" type="button" onClick={() => deleteMemo(selectedMemo.id)}>
+                    Delete
+                  </button>
+                </div>
+              </footer>
+            </section>
+          </div>
+        )}
       </main>
     </div>
   );

@@ -13,7 +13,7 @@ function isMemo(value: unknown): value is Memo {
     typeof memo.id === 'string' &&
     typeof memo.title === 'string' &&
     typeof memo.content === 'string' &&
-    (memo.provider === 'claude' || memo.provider === 'chatgpt' || memo.provider === null) &&
+    (memo.provider === 'claude' || memo.provider === 'chatgpt' || memo.provider === 'gemini' || memo.provider === null) &&
     (typeof memo.sourceUrl === 'string' || memo.sourceUrl === null) &&
     (typeof memo.sourceTitle === 'string' || memo.sourceTitle === null) &&
     typeof memo.pinned === 'boolean' &&
@@ -50,10 +50,12 @@ export function createMemo(draft: MemoDraft): Memo {
   const now = Date.now();
   const content = draft.content.trim();
   const fallbackTitle = content.split(/\r?\n/).find(Boolean)?.slice(0, 64) ?? 'Untitled memo';
+  const title =
+    draft.title === undefined ? (draft.sourceTitle ?? fallbackTitle).trim().slice(0, 120) || fallbackTitle : draft.title.trim().slice(0, 120);
 
   return {
     id: crypto.randomUUID(),
-    title: (draft.title ?? draft.sourceTitle ?? fallbackTitle).trim().slice(0, 120) || fallbackTitle,
+    title,
     content,
     provider: draft.provider,
     sourceUrl: draft.sourceUrl,
