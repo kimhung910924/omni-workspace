@@ -35,8 +35,6 @@ type BroadcastStatus = {
   message: string;
 };
 
-type BroadcastProviderId = Exclude<ProviderId, 'gemini'>;
-
 type NavigationState = {
   canGoBack: boolean;
   canGoForward: boolean;
@@ -68,8 +66,6 @@ const PROVIDERS: Array<{
     partition: window.omni?.geminiPartition ?? 'persist:gemini',
   },
 ];
-
-const BROADCAST_PROVIDER_IDS: BroadcastProviderId[] = ['claude', 'chatgpt'];
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   claude: 'Claude',
@@ -154,9 +150,10 @@ function App() {
   });
   const [broadcastCollapsed, setBroadcastCollapsed] = React.useState(false);
   const [broadcastText, setBroadcastText] = React.useState('');
-  const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<BroadcastProviderId, BroadcastStatus>>({
+  const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<ProviderId, BroadcastStatus>>({
     claude: { state: 'idle', message: 'Ready' },
     chatgpt: { state: 'idle', message: 'Ready' },
+    gemini: { state: 'idle', message: 'Ready' },
   });
   const webviewRefs = React.useRef<Partial<Record<ProviderId, ProviderWebview>>>({});
   const webviewReadyRef = React.useRef<Partial<Record<ProviderId, boolean>>>({});
@@ -166,8 +163,8 @@ function App() {
     [openProviderIds],
   );
   const broadcastProviders = React.useMemo(
-    () => openProviders.filter((provider) => BROADCAST_PROVIDER_IDS.includes(provider.id as BroadcastProviderId)),
-    [openProviders],
+    () => openProviders.filter((provider) => !collapsedProviders[provider.id]),
+    [collapsedProviders, openProviders],
   );
   const activeProvider = PROVIDERS.find((provider) => provider.id === activeProviderId) ?? PROVIDERS[0];
   const initialProviderUrls = React.useMemo(
@@ -368,8 +365,7 @@ function App() {
       setBroadcastStatuses((currentStatuses) => {
         const nextStatuses = { ...currentStatuses };
         broadcastProviders.forEach((provider) => {
-          const providerId = provider.id as BroadcastProviderId;
-          nextStatuses[providerId] = { state: 'pending', message: 'Sending...' };
+          nextStatuses[provider.id] = { state: 'pending', message: 'Sending...' };
         });
         return nextStatuses;
       });
@@ -395,16 +391,15 @@ function App() {
 
       settledResults.forEach((result, index) => {
         const provider = broadcastProviders[index];
-        const providerId = provider.id as BroadcastProviderId;
 
         if (result.status === 'rejected') {
           const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
           console.error('[Omni broadcast]', provider.label, reason);
-          nextStatuses[providerId] = { state: 'failed', message: reason };
+          nextStatuses[provider.id] = { state: 'failed', message: reason };
           return;
         }
 
-        nextStatuses[providerId] = {
+        nextStatuses[provider.id] = {
           state: result.value.ok ? 'sent' : 'failed',
           message: result.value.message,
         };
@@ -836,7 +831,7 @@ function App() {
                 className="broadcast-input"
                 value={broadcastText}
                 rows={1}
-                placeholder="Send the same message to Claude and ChatGPT"
+                placeholder="모든모델에게 메세지 보내기"
                 onChange={(event) => setBroadcastText(event.target.value)}
                 onKeyDown={handleBroadcastKeyDown}
               />
