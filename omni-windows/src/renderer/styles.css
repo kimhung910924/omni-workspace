@@ -350,20 +350,6 @@ button { font: inherit; }
   white-space: nowrap;
 }
 
-.gemini-pane-header {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-width: 0;
-  padding: 5px 6px;
-  border-bottom: 1px solid #303030;
-  background: #1d1d1d;
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 800;
-}
-
 .provider-pane.collapsed .slot-header {
   display: flex;
   flex-direction: column;

@@ -35,6 +35,8 @@ type BroadcastStatus = {
   message: string;
 };
 
+type BroadcastProviderId = Exclude<ProviderId, 'gemini'>;
+
 type NavigationState = {
   canGoBack: boolean;
   canGoForward: boolean;
@@ -49,27 +51,30 @@ const PROVIDERS: Array<{
 }> = [
   {
     id: 'claude',
-    label: 'Claude',
-    defaultUrl: 'https://claude.ai',
+    label: providerAdapters.claude.label,
+    defaultUrl: providerAdapters.claude.startUrl,
     partition: window.omni?.claudePartition ?? 'persist:claude',
   },
   {
     id: 'chatgpt',
-    label: 'ChatGPT',
-    defaultUrl: 'https://chatgpt.com',
+    label: providerAdapters.chatgpt.label,
+    defaultUrl: providerAdapters.chatgpt.startUrl,
     partition: window.omni?.chatgptPartition ?? 'persist:chatgpt',
+  },
+  {
+    id: 'gemini',
+    label: providerAdapters.gemini.label,
+    defaultUrl: providerAdapters.gemini.startUrl,
+    partition: window.omni?.geminiPartition ?? 'persist:gemini',
   },
 ];
 
-const GEMINI_PROVIDER = {
-  label: 'Gemini',
-  defaultUrl: 'https://gemini.google.com',
-  partition: window.omni?.geminiPartition ?? 'persist:gemini',
-};
+const BROADCAST_PROVIDER_IDS: BroadcastProviderId[] = ['claude', 'chatgpt'];
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   claude: 'Claude',
   chatgpt: 'ChatGPT',
+  gemini: 'Gemini',
 };
 
 const LOAD_FAILURE_MESSAGE = '삭제되었거나 접근할 수 없는 대화방입니다. 메모는 그대로 보관됩니다.';
@@ -140,14 +145,16 @@ function App() {
   const [collapsedProviders, setCollapsedProviders] = React.useState<Record<ProviderId, boolean>>({
     claude: false,
     chatgpt: false,
+    gemini: false,
   });
   const [navigationStates, setNavigationStates] = React.useState<Partial<Record<ProviderId, NavigationState>>>({
     claude: { canGoBack: false, canGoForward: false, isDomReady: false },
     chatgpt: { canGoBack: false, canGoForward: false, isDomReady: false },
+    gemini: { canGoBack: false, canGoForward: false, isDomReady: false },
   });
   const [broadcastCollapsed, setBroadcastCollapsed] = React.useState(false);
   const [broadcastText, setBroadcastText] = React.useState('');
-  const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<ProviderId, BroadcastStatus>>({
+  const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<BroadcastProviderId, BroadcastStatus>>({
     claude: { state: 'idle', message: 'Ready' },
     chatgpt: { state: 'idle', message: 'Ready' },
   });
@@ -157,6 +164,10 @@ function App() {
   const openProviders = React.useMemo(
     () => openProviderIds.map((providerId) => PROVIDERS.find((provider) => provider.id === providerId)).filter(Boolean) as typeof PROVIDERS,
     [openProviderIds],
+  );
+  const broadcastProviders = React.useMemo(
+    () => openProviders.filter((provider) => BROADCAST_PROVIDER_IDS.includes(provider.id as BroadcastProviderId)),
+    [openProviders],
   );
   const activeProvider = PROVIDERS.find((provider) => provider.id === activeProviderId) ?? PROVIDERS[0];
   const initialProviderUrls = React.useMemo(
@@ -304,7 +315,7 @@ function App() {
         webview.dataset.omniTrackedProvider = providerId;
       }
 
-      if (webview.dataset.omniMemoProvider !== providerId) {
+      if (providerId !== 'gemini' && webview.dataset.omniMemoProvider !== providerId) {
         webview.addEventListener('ipc-message', (event: WebviewIpcMessageEvent) => {
           if (event.channel !== 'omni-save-memo') {
             return;
@@ -356,14 +367,15 @@ function App() {
 
       setBroadcastStatuses((currentStatuses) => {
         const nextStatuses = { ...currentStatuses };
-        openProviders.forEach((provider) => {
-          nextStatuses[provider.id] = { state: 'pending', message: 'Sending...' };
+        broadcastProviders.forEach((provider) => {
+          const providerId = provider.id as BroadcastProviderId;
+          nextStatuses[providerId] = { state: 'pending', message: 'Sending...' };
         });
         return nextStatuses;
       });
 
       const settledResults = await Promise.allSettled(
-        openProviders.map(async (provider): Promise<SendResult> => {
+        broadcastProviders.map(async (provider): Promise<SendResult> => {
           const webview = webviewRefs.current[provider.id];
 
           if (!webview) {
@@ -382,16 +394,17 @@ function App() {
       const nextStatuses = { ...broadcastStatuses };
 
       settledResults.forEach((result, index) => {
-        const provider = openProviders[index];
+        const provider = broadcastProviders[index];
+        const providerId = provider.id as BroadcastProviderId;
 
         if (result.status === 'rejected') {
           const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
           console.error('[Omni broadcast]', provider.label, reason);
-          nextStatuses[provider.id] = { state: 'failed', message: reason };
+          nextStatuses[providerId] = { state: 'failed', message: reason };
           return;
         }
 
-        nextStatuses[provider.id] = {
+        nextStatuses[providerId] = {
           state: result.value.ok ? 'sent' : 'failed',
           message: result.value.message,
         };
@@ -400,7 +413,7 @@ function App() {
       setBroadcastStatuses(nextStatuses);
       setBroadcastText('');
     },
-    [broadcastStatuses, broadcastText, openProviders],
+    [broadcastProviders, broadcastStatuses, broadcastText],
   );
 
   const handleBroadcastKeyDown = React.useCallback(
@@ -600,18 +613,26 @@ function App() {
 
   const goProviderBack = React.useCallback(
     (providerId: ProviderId) => {
+      if (!navigationStates[providerId]?.canGoBack) {
+        return;
+      }
+
       webviewRefs.current[providerId]?.goBack?.();
       window.setTimeout(() => updateProviderNavigationState(providerId), 0);
     },
-    [updateProviderNavigationState],
+    [navigationStates, updateProviderNavigationState],
   );
 
   const goProviderForward = React.useCallback(
     (providerId: ProviderId) => {
+      if (!navigationStates[providerId]?.canGoForward) {
+        return;
+      }
+
       webviewRefs.current[providerId]?.goForward?.();
       window.setTimeout(() => updateProviderNavigationState(providerId), 0);
     },
-    [updateProviderNavigationState],
+    [navigationStates, updateProviderNavigationState],
   );
 
   const reloadProvider = React.useCallback((providerId: ProviderId) => {
@@ -757,64 +778,43 @@ function App() {
           aria-label="Claude, ChatGPT, and Gemini webviews"
           aria-hidden={memoPanelOpen}
         >
-          {webviewCapturePreloadUrl ? (
-            <>
-              {openProviders.map((provider) => {
-                const isCollapsed = collapsedProviders[provider.id];
-                const canCollapse =
-                  !isCollapsed && openProviders.some((other) => other.id !== provider.id && !collapsedProviders[other.id]);
-                const navigationState = navigationStates[provider.id] ?? {
-                  canGoBack: false,
-                  canGoForward: false,
-                  isDomReady: false,
-                };
+          {webviewCapturePreloadUrl ? openProviders.map((provider) => {
+            const isCollapsed = collapsedProviders[provider.id];
+            const canCollapse =
+              !isCollapsed && openProviders.some((other) => other.id !== provider.id && !collapsedProviders[other.id]);
+            const navigationState = navigationStates[provider.id] ?? {
+              canGoBack: false,
+              canGoForward: false,
+              isDomReady: false,
+            };
 
-                return (
-                  <div key={provider.id} className={`provider-pane ${isCollapsed ? 'collapsed' : 'expanded'}`}>
-                    <SlotHeader
-                      providerId={provider.id}
-                      label={provider.label}
-                      isCollapsed={isCollapsed}
-                      canCollapse={canCollapse}
-                      canGoBack={navigationState.canGoBack}
-                      canGoForward={navigationState.canGoForward}
-                      onBack={() => goProviderBack(provider.id)}
-                      onForward={() => goProviderForward(provider.id)}
-                      onReload={() => reloadProvider(provider.id)}
-                      onHome={() => startProviderNewChat(provider.id)}
-                      onToggleCollapse={() => toggleProviderCollapsed(provider.id)}
-                      onClose={() => closeProviderSlot(provider.id)}
-                    />
-                    <webview
-                      className="provider-webview"
-                      src={initialProviderUrls[provider.id]}
-                      partition={provider.partition}
-                      preload={webviewCapturePreloadUrl?.startsWith('file:') ? webviewCapturePreloadUrl : undefined}
-                      allowpopups={'true' as unknown as boolean}
-                      ref={getProviderWebviewRef(provider.id)}
-                    />
-                  </div>
-                );
-              })}
-              <div className="provider-pane gemini-pane expanded">
-                <div className="gemini-pane-header">
-                  <span className="slot-provider-icon gemini" aria-hidden="true">
-                    G
-                  </span>
-                  <span className="slot-provider-label">{GEMINI_PROVIDER.label}</span>
-                </div>
+            return (
+              <div key={provider.id} className={`provider-pane ${isCollapsed ? 'collapsed' : 'expanded'}`}>
+                <SlotHeader
+                  providerId={provider.id}
+                  label={provider.label}
+                  isCollapsed={isCollapsed}
+                  canCollapse={canCollapse}
+                  canGoBack={navigationState.canGoBack}
+                  canGoForward={navigationState.canGoForward}
+                  onBack={() => goProviderBack(provider.id)}
+                  onForward={() => goProviderForward(provider.id)}
+                  onReload={() => reloadProvider(provider.id)}
+                  onHome={() => startProviderNewChat(provider.id)}
+                  onToggleCollapse={() => toggleProviderCollapsed(provider.id)}
+                  onClose={() => closeProviderSlot(provider.id)}
+                />
                 <webview
                   className="provider-webview"
-                  src={GEMINI_PROVIDER.defaultUrl}
-                  partition={GEMINI_PROVIDER.partition}
+                  src={initialProviderUrls[provider.id]}
+                  partition={provider.partition}
                   preload={webviewCapturePreloadUrl?.startsWith('file:') ? webviewCapturePreloadUrl : undefined}
                   allowpopups={'true' as unknown as boolean}
+                  ref={getProviderWebviewRef(provider.id)}
                 />
               </div>
-            </>
-          ) : (
-            <div className="webview-loading">Preparing workspace...</div>
-          )}
+            );
+          }) : <div className="webview-loading">Preparing workspace...</div>}
         </section>
 
         <form

@@ -20,6 +20,7 @@ export type SendResult = {
 export type ProviderAdapter = {
   providerId: ProviderId;
   label: string;
+  startUrl: string;
   newChatUrl: string;
   sendMessage: (webview: ProviderWebview, text: string) => Promise<SendResult>;
 };

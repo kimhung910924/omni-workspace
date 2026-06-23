@@ -1,4 +1,4 @@
-export type ProviderId = 'claude' | 'chatgpt';
+export type ProviderId = 'claude' | 'chatgpt' | 'gemini';
 
 export type ProviderUrlConfig = {
   id: ProviderId;
@@ -18,7 +18,8 @@ function isRestorableUrl(providerId: ProviderId, value: string): boolean {
     return (
       url.protocol === 'https:' &&
       ((providerId === 'claude' && url.hostname === 'claude.ai') ||
-        (providerId === 'chatgpt' && url.hostname === 'chatgpt.com'))
+        (providerId === 'chatgpt' && url.hostname === 'chatgpt.com') ||
+        (providerId === 'gemini' && url.hostname === 'gemini.google.com'))
     );
   } catch {
     return false;
