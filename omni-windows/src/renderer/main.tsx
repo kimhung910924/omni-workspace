@@ -1058,10 +1058,11 @@ function App() {
                 const provider = getProviderConfig(slot.providerId);
 
                 return (
-                  <button
+                  <div
                     key={slot.id}
                     className="dock-chip"
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     draggable
                     title={`${provider.label} - ${slot.title}`}
                     onDragStart={(event) => handleSlotDragStart(slot.id, event)}
@@ -1069,6 +1070,12 @@ function App() {
                     onDragOver={handleSlotDragOver}
                     onDrop={(event) => handleSlotDrop('dock', slot.id, event)}
                     onClick={() => moveSlotToStage(slot.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        moveSlotToStage(slot.id);
+                      }
+                    }}
                   >
                     <ProviderIcon providerId={slot.providerId} label={provider.label} />
                     {!dockMinimized && (
@@ -1077,7 +1084,7 @@ function App() {
                         <span className="dock-chip-title">{slot.title}</span>
                       </span>
                     )}
-                  </button>
+                  </div>
                 );
               })}
             </div>
