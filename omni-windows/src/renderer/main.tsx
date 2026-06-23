@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './styles.css';
+import { SlotHeader } from './SlotHeader';
 import { providerAdapters, type ProviderWebview, type SendResult } from './providerAdapters';
 import { getInitialProviderUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
 import { createMemo, loadMemos, saveMemos } from './features/memos/memoStore';
@@ -32,6 +33,12 @@ type TrackedProviderWebview = ProviderWebview & {
 type BroadcastStatus = {
   state: 'idle' | 'pending' | 'sent' | 'failed';
   message: string;
+};
+
+type NavigationState = {
+  canGoBack: boolean;
+  canGoForward: boolean;
+  isDomReady: boolean;
 };
 
 const PROVIDERS: Array<{
@@ -123,9 +130,14 @@ function App() {
   const [navigationNotice, setNavigationNotice] = React.useState('');
   const [memos, setMemos] = React.useState<Memo[]>(() => loadMemos());
   const [webviewCapturePreloadUrl, setWebviewCapturePreloadUrl] = React.useState<string | null>(null);
+  const [openProviderIds, setOpenProviderIds] = React.useState<ProviderId[]>(() => PROVIDERS.map((provider) => provider.id));
   const [collapsedProviders, setCollapsedProviders] = React.useState<Record<ProviderId, boolean>>({
     claude: false,
     chatgpt: false,
+  });
+  const [navigationStates, setNavigationStates] = React.useState<Partial<Record<ProviderId, NavigationState>>>({
+    claude: { canGoBack: false, canGoForward: false, isDomReady: false },
+    chatgpt: { canGoBack: false, canGoForward: false, isDomReady: false },
   });
   const [broadcastCollapsed, setBroadcastCollapsed] = React.useState(false);
   const [broadcastText, setBroadcastText] = React.useState('');
@@ -134,6 +146,12 @@ function App() {
     chatgpt: { state: 'idle', message: 'Ready' },
   });
   const webviewRefs = React.useRef<Partial<Record<ProviderId, ProviderWebview>>>({});
+  const webviewReadyRef = React.useRef<Partial<Record<ProviderId, boolean>>>({});
+  const webviewRefCallbacks = React.useRef<Partial<Record<ProviderId, (webview: TrackedProviderWebview | null) => void>>>({});
+  const openProviders = React.useMemo(
+    () => openProviderIds.map((providerId) => PROVIDERS.find((provider) => provider.id === providerId)).filter(Boolean) as typeof PROVIDERS,
+    [openProviderIds],
+  );
   const activeProvider = PROVIDERS.find((provider) => provider.id === activeProviderId) ?? PROVIDERS[0];
   const initialProviderUrls = React.useMemo(
     () =>
@@ -192,31 +210,89 @@ function App() {
   const unpinnedMemos = sortedMemos.filter((memo) => !memo.pinned);
   const selectedMemo = selectedMemoId ? (memos.find((memo) => memo.id === selectedMemoId) ?? null) : null;
 
+  const updateProviderNavigationState = React.useCallback((providerId: ProviderId) => {
+    const webview = webviewRefs.current[providerId];
+
+    if (!webview || !webview.isConnected || !webviewReadyRef.current[providerId]) {
+      setNavigationStates((current) => ({
+        ...current,
+        [providerId]: {
+          canGoBack: false,
+          canGoForward: false,
+          isDomReady: Boolean(webviewReadyRef.current[providerId]),
+        },
+      }));
+      return;
+    }
+
+    try {
+      const canGoBack = Boolean(webview.canGoBack?.());
+      const canGoForward = Boolean(webview.canGoForward?.());
+
+      setNavigationStates((current) => ({
+        ...current,
+        [providerId]: {
+          canGoBack,
+          canGoForward,
+          isDomReady: true,
+        },
+      }));
+    } catch (error) {
+      console.warn('Failed to read webview navigation state', providerId, error);
+      setNavigationStates((current) => ({
+        ...current,
+        [providerId]: {
+          canGoBack: false,
+          canGoForward: false,
+          isDomReady: Boolean(webviewReadyRef.current[providerId]),
+        },
+      }));
+    }
+  }, []);
+
+  const clearProviderNavigationState = React.useCallback((providerId: ProviderId) => {
+    setNavigationStates((current) => {
+      const next = { ...current };
+      delete next[providerId];
+      return next;
+    });
+  }, []);
+
   const attachNavigationTracker = React.useCallback(
     (providerId: ProviderId) => (webview: TrackedProviderWebview | null) => {
       if (!webview) {
         delete webviewRefs.current[providerId];
+        delete webviewReadyRef.current[providerId];
         return;
       }
 
       webviewRefs.current[providerId] = webview;
 
       if (webview.dataset.omniTrackedProvider !== providerId) {
+        webview.addEventListener('dom-ready', () => {
+          webviewReadyRef.current[providerId] = true;
+          updateProviderNavigationState(providerId);
+        });
+
         const saveCurrentUrl = (event: WebviewNavigationEvent) => {
           const navigatedUrl = event.url ?? webview.getURL?.();
 
           if (navigatedUrl) {
             saveProviderUrl(providerId, navigatedUrl);
           }
+
+          updateProviderNavigationState(providerId);
         };
 
         webview.addEventListener('did-navigate', saveCurrentUrl);
         webview.addEventListener('did-navigate-in-page', saveCurrentUrl);
+        webview.addEventListener('did-finish-load', () => updateProviderNavigationState(providerId));
         webview.addEventListener('did-fail-load', (event: WebviewNavigationEvent) => {
           if (event.isMainFrame === false || event.errorCode === -3) {
             return;
           }
 
+          updateProviderNavigationState(providerId);
           setNavigationNotice(LOAD_FAILURE_MESSAGE);
         });
         webview.dataset.omniTrackedProvider = providerId;
@@ -251,7 +327,15 @@ function App() {
         webview.dataset.omniMemoProvider = providerId;
       }
     },
-    [],
+    [updateProviderNavigationState],
+  );
+
+  const getProviderWebviewRef = React.useCallback(
+    (providerId: ProviderId) => {
+      webviewRefCallbacks.current[providerId] ??= attachNavigationTracker(providerId);
+      return webviewRefCallbacks.current[providerId];
+    },
+    [attachNavigationTracker],
   );
 
   const handleBroadcastSubmit = React.useCallback(
@@ -264,13 +348,16 @@ function App() {
 
       const messageText = broadcastText;
 
-      setBroadcastStatuses({
-        claude: { state: 'pending', message: 'Sending...' },
-        chatgpt: { state: 'pending', message: 'Sending...' },
+      setBroadcastStatuses((currentStatuses) => {
+        const nextStatuses = { ...currentStatuses };
+        openProviders.forEach((provider) => {
+          nextStatuses[provider.id] = { state: 'pending', message: 'Sending...' };
+        });
+        return nextStatuses;
       });
 
       const settledResults = await Promise.allSettled(
-        PROVIDERS.map(async (provider): Promise<SendResult> => {
+        openProviders.map(async (provider): Promise<SendResult> => {
           const webview = webviewRefs.current[provider.id];
 
           if (!webview) {
@@ -289,7 +376,7 @@ function App() {
       const nextStatuses = { ...broadcastStatuses };
 
       settledResults.forEach((result, index) => {
-        const provider = PROVIDERS[index];
+        const provider = openProviders[index];
 
         if (result.status === 'rejected') {
           const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
@@ -307,7 +394,7 @@ function App() {
       setBroadcastStatuses(nextStatuses);
       setBroadcastText('');
     },
-    [broadcastStatuses, broadcastText],
+    [broadcastStatuses, broadcastText, openProviders],
   );
 
   const handleBroadcastKeyDown = React.useCallback(
@@ -418,6 +505,10 @@ function App() {
 
     const providerId = memo.provider;
 
+    if (!openProviderIds.includes(providerId)) {
+      return;
+    }
+
     setActiveProviderId(providerId);
     setMemoPanelOpen(false);
     setNavigationNotice('');
@@ -427,7 +518,7 @@ function App() {
       [providerId]: false,
     }));
     webviewRefs.current[providerId]?.loadURL?.(memo.sourceUrl);
-  }, [closeMemoDetail]);
+  }, [closeMemoDetail, openProviderIds]);
 
   const duplicateMemo = React.useCallback((memo: Memo, titleValue = memo.title, contentValue = memo.content) => {
     const now = Date.now();
@@ -501,6 +592,56 @@ function App() {
     );
   };
 
+  const goProviderBack = React.useCallback(
+    (providerId: ProviderId) => {
+      webviewRefs.current[providerId]?.goBack?.();
+      window.setTimeout(() => updateProviderNavigationState(providerId), 0);
+    },
+    [updateProviderNavigationState],
+  );
+
+  const goProviderForward = React.useCallback(
+    (providerId: ProviderId) => {
+      webviewRefs.current[providerId]?.goForward?.();
+      window.setTimeout(() => updateProviderNavigationState(providerId), 0);
+    },
+    [updateProviderNavigationState],
+  );
+
+  const reloadProvider = React.useCallback((providerId: ProviderId) => {
+    webviewRefs.current[providerId]?.reload?.();
+  }, []);
+
+  const startProviderNewChat = React.useCallback((providerId: ProviderId) => {
+    webviewRefs.current[providerId]?.loadURL?.(providerAdapters[providerId].newChatUrl);
+  }, []);
+
+  const closeProviderSlot = React.useCallback((providerId: ProviderId) => {
+    delete webviewRefs.current[providerId];
+    delete webviewReadyRef.current[providerId];
+    delete webviewRefCallbacks.current[providerId];
+    setOpenProviderIds((currentProviderIds) => {
+      const nextProviderIds = currentProviderIds.filter((currentProviderId) => currentProviderId !== providerId);
+
+      if (activeProviderId === providerId) {
+        const nextActiveProviderId = nextProviderIds[0] ?? null;
+
+        if (nextActiveProviderId) {
+          setActiveProviderId(nextActiveProviderId);
+        } else {
+          setMemoPanelOpen(true);
+        }
+      }
+
+      return nextProviderIds;
+    });
+    setCollapsedProviders((current) => ({
+      ...current,
+      [providerId]: false,
+    }));
+    clearProviderNavigationState(providerId);
+  }, [activeProviderId, clearProviderNavigationState]);
+
   const toggleProviderCollapsed = React.useCallback((providerId: ProviderId) => {
     setCollapsedProviders((current) => {
       if (current[providerId]) {
@@ -511,19 +652,19 @@ function App() {
         };
       }
 
-      const otherProvider = PROVIDERS.find((provider) => provider.id !== providerId);
+      const otherProviderId = openProviderIds.find((currentProviderId) => currentProviderId !== providerId);
 
-      if (!otherProvider || current[otherProvider.id]) {
+      if (!otherProviderId || current[otherProviderId]) {
         return current;
       }
 
-      setActiveProviderId(otherProvider.id);
+      setActiveProviderId(otherProviderId);
       return {
         ...current,
         [providerId]: true,
       };
     });
-  }, []);
+  }, [openProviderIds]);
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -540,7 +681,7 @@ function App() {
           <div className="brand">Omni</div>
         </div>
         <nav className="workspace-list" aria-label="Workspaces">
-          {PROVIDERS.map((provider) => (
+          {openProviders.map((provider) => (
             <button
               key={provider.id}
               className={`workspace-item ${!memoPanelOpen && provider.id === activeProviderId ? 'active' : ''}`}
@@ -571,7 +712,7 @@ function App() {
       <main className="main-area">
         <header className="topbar" aria-label="Workspace status">
           <div className="topbar-tabs" role="tablist" aria-label="Workspace tabs">
-            {PROVIDERS.map((provider) => (
+            {openProviders.map((provider) => (
               <button
                 key={provider.id}
                 className={`topbar-tab ${!memoPanelOpen && provider.id === activeProviderId ? 'active' : ''}`}
@@ -610,38 +751,39 @@ function App() {
           aria-label="Claude and ChatGPT webviews"
           aria-hidden={memoPanelOpen}
         >
-          {webviewCapturePreloadUrl ? PROVIDERS.map((provider) => {
+          {webviewCapturePreloadUrl ? openProviders.map((provider) => {
             const isCollapsed = collapsedProviders[provider.id];
             const canCollapse =
-              !isCollapsed && PROVIDERS.some((other) => other.id !== provider.id && !collapsedProviders[other.id]);
+              !isCollapsed && openProviders.some((other) => other.id !== provider.id && !collapsedProviders[other.id]);
+            const navigationState = navigationStates[provider.id] ?? {
+              canGoBack: false,
+              canGoForward: false,
+              isDomReady: false,
+            };
 
             return (
               <div key={provider.id} className={`provider-pane ${isCollapsed ? 'collapsed' : 'expanded'}`}>
-                <div className="provider-pane-header">
-                  <span className="provider-pane-title">{provider.label}</span>
-                  {!isCollapsed && (
-                    <span className={`provider-status ${broadcastStatuses[provider.id].state}`}>
-                      {broadcastStatuses[provider.id].message}
-                    </span>
-                  )}
-                  <button
-                    className="provider-collapse-button"
-                    type="button"
-                    disabled={!isCollapsed && !canCollapse}
-                    title={isCollapsed ? `Expand ${provider.label}` : `Collapse ${provider.label}`}
-                    aria-label={isCollapsed ? `Expand ${provider.label}` : `Collapse ${provider.label}`}
-                    onClick={() => toggleProviderCollapsed(provider.id)}
-                  >
-                    {isCollapsed ? '>' : '<'}
-                  </button>
-                </div>
+                <SlotHeader
+                  providerId={provider.id}
+                  label={provider.label}
+                  isCollapsed={isCollapsed}
+                  canCollapse={canCollapse}
+                  canGoBack={navigationState.canGoBack}
+                  canGoForward={navigationState.canGoForward}
+                  onBack={() => goProviderBack(provider.id)}
+                  onForward={() => goProviderForward(provider.id)}
+                  onReload={() => reloadProvider(provider.id)}
+                  onHome={() => startProviderNewChat(provider.id)}
+                  onToggleCollapse={() => toggleProviderCollapsed(provider.id)}
+                  onClose={() => closeProviderSlot(provider.id)}
+                />
                 <webview
                   className="provider-webview"
                   src={initialProviderUrls[provider.id]}
                   partition={provider.partition}
                   preload={webviewCapturePreloadUrl?.startsWith('file:') ? webviewCapturePreloadUrl : undefined}
                   allowpopups={'true' as unknown as boolean}
-                  ref={attachNavigationTracker(provider.id)}
+                  ref={getProviderWebviewRef(provider.id)}
                 />
               </div>
             );

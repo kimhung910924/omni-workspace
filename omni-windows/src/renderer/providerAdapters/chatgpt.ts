@@ -4,6 +4,7 @@ import type { ProviderAdapter } from './types';
 export const chatgptAdapter: ProviderAdapter = {
   providerId: 'chatgpt',
   label: 'ChatGPT',
+  newChatUrl: 'https://chatgpt.com/',
   sendMessage(webview, text) {
     return executeDomSend(
       webview,

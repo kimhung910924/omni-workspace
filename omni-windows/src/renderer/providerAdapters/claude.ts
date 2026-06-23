@@ -4,6 +4,7 @@ import type { ProviderAdapter } from './types';
 export const claudeAdapter: ProviderAdapter = {
   providerId: 'claude',
   label: 'Claude',
+  newChatUrl: 'https://claude.ai/new',
   sendMessage(webview, text) {
     return executeDomSend(
       webview,
