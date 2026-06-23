@@ -26,8 +26,8 @@ type WebviewIpcMessageEvent = Event & {
 type TrackedProviderWebview = ProviderWebview & {
   getURL?: () => string;
   dataset: DOMStringMap & {
-    omniTrackedProvider?: ProviderId;
-    omniMemoProvider?: ProviderId;
+    omniTrackedSlot?: string;
+    omniMemoSlot?: string;
   };
 };
 
@@ -41,6 +41,18 @@ type NavigationState = {
   canGoForward: boolean;
   isDomReady: boolean;
 };
+
+type Slot = {
+  id: string;
+  providerId: ProviderId;
+  currentUrl: string;
+  title: string;
+};
+
+type LayoutMode = 'row' | 'grid2x2';
+
+const MAX_SLOTS = 8;
+const MAX_STAGE_SLOTS = 4;
 
 const PROVIDERS: Array<{
   id: ProviderId;
@@ -73,6 +85,21 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   chatgpt: 'ChatGPT',
   gemini: 'Gemini',
 };
+
+function getProviderConfig(providerId: ProviderId) {
+  return PROVIDERS.find((provider) => provider.id === providerId) ?? PROVIDERS[0];
+}
+
+function createInitialSlot(providerId: ProviderId): Slot {
+  const provider = getProviderConfig(providerId);
+
+  return {
+    id: providerId,
+    providerId,
+    currentUrl: getInitialProviderUrl({ id: provider.id, defaultUrl: provider.defaultUrl }),
+    title: provider.label,
+  };
+}
 
 const LOAD_FAILURE_MESSAGE = '삭제되었거나 접근할 수 없는 대화방입니다. 메모는 그대로 보관됩니다.';
 
@@ -126,7 +153,7 @@ function getSourceHint(memo: Memo): string {
 }
 
 function App() {
-  const [activeProviderId, setActiveProviderId] = React.useState<ProviderId>('claude');
+  const [activeSlotId, setActiveSlotId] = React.useState<string>('claude');
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [memoPanelOpen, setMemoPanelOpen] = React.useState(false);
   const [memoSearch, setMemoSearch] = React.useState('');
@@ -138,50 +165,53 @@ function App() {
   const [navigationNotice, setNavigationNotice] = React.useState('');
   const [memos, setMemos] = React.useState<Memo[]>(() => loadMemos());
   const [webviewCapturePreloadUrl, setWebviewCapturePreloadUrl] = React.useState<string | null>(null);
-  const [openProviderIds, setOpenProviderIds] = React.useState<ProviderId[]>(() => PROVIDERS.map((provider) => provider.id));
-  const [collapsedProviders, setCollapsedProviders] = React.useState<Record<ProviderId, boolean>>({
-    claude: false,
-    chatgpt: false,
-    gemini: false,
-  });
-  const [navigationStates, setNavigationStates] = React.useState<Partial<Record<ProviderId, NavigationState>>>({
+  const [slots, setSlots] = React.useState<Slot[]>(() => PROVIDERS.map((provider) => createInitialSlot(provider.id)));
+  const [stageIds, setStageIds] = React.useState<string[]>(() => PROVIDERS.map((provider) => provider.id));
+  const [dockIds, setDockIds] = React.useState<string[]>([]);
+  const [layoutMode, setLayoutMode] = React.useState<LayoutMode>('row');
+  const [dockMinimized, setDockMinimized] = React.useState(false);
+  const [navigationStates, setNavigationStates] = React.useState<Partial<Record<string, NavigationState>>>({
     claude: { canGoBack: false, canGoForward: false, isDomReady: false },
     chatgpt: { canGoBack: false, canGoForward: false, isDomReady: false },
     gemini: { canGoBack: false, canGoForward: false, isDomReady: false },
   });
   const [broadcastCollapsed, setBroadcastCollapsed] = React.useState(false);
   const [broadcastText, setBroadcastText] = React.useState('');
-  const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<ProviderId, BroadcastStatus>>({
+  const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<string, BroadcastStatus>>({
     claude: { state: 'idle', message: 'Ready' },
     chatgpt: { state: 'idle', message: 'Ready' },
     gemini: { state: 'idle', message: 'Ready' },
   });
-  const webviewRefs = React.useRef<Partial<Record<ProviderId, ProviderWebview>>>({});
-  const webviewReadyRef = React.useRef<Partial<Record<ProviderId, boolean>>>({});
-  const webviewRefCallbacks = React.useRef<Partial<Record<ProviderId, (webview: TrackedProviderWebview | null) => void>>>({});
-  const openProviders = React.useMemo(
-    () => openProviderIds.map((providerId) => PROVIDERS.find((provider) => provider.id === providerId)).filter(Boolean) as typeof PROVIDERS,
-    [openProviderIds],
-  );
-  const broadcastProviders = React.useMemo(
-    () => openProviders.filter((provider) => !collapsedProviders[provider.id]),
-    [collapsedProviders, openProviders],
-  );
-  const activeProvider = PROVIDERS.find((provider) => provider.id === activeProviderId) ?? PROVIDERS[0];
-  const initialProviderUrls = React.useMemo(
-    () =>
-      Object.fromEntries(
-        PROVIDERS.map((provider) => [
-          provider.id,
-          getInitialProviderUrl({ id: provider.id, defaultUrl: provider.defaultUrl }),
-        ]),
-      ) as Record<ProviderId, string>,
-    [],
+  const webviewRefs = React.useRef<Partial<Record<string, ProviderWebview>>>({});
+  const webviewReadyRef = React.useRef<Partial<Record<string, boolean>>>({});
+  const webviewRefCallbacks = React.useRef<Partial<Record<string, (webview: TrackedProviderWebview | null) => void>>>({});
+  const slotsById = React.useMemo(() => new Map(slots.map((slot) => [slot.id, slot])), [slots]);
+  const stageSlots = React.useMemo(() => stageIds.map((slotId) => slotsById.get(slotId)).filter(Boolean) as Slot[], [slotsById, stageIds]);
+  const dockSlots = React.useMemo(() => dockIds.map((slotId) => slotsById.get(slotId)).filter(Boolean) as Slot[], [dockIds, slotsById]);
+  const activeSlot = slotsById.get(activeSlotId) ?? stageSlots[0] ?? slots[0] ?? null;
+  const activeProvider = activeSlot ? getProviderConfig(activeSlot.providerId) : PROVIDERS[0];
+  const isStageGrid = stageIds.length === MAX_STAGE_SLOTS && layoutMode === 'grid2x2';
+  const stageGridStyle = React.useMemo<React.CSSProperties>(
+    () => ({
+      gridTemplateColumns: isStageGrid ? 'repeat(2, minmax(0, 1fr))' : `repeat(${Math.max(stageIds.length, 1)}, minmax(0, 1fr))`,
+    }),
+    [isStageGrid, stageIds.length],
   );
 
   React.useEffect(() => {
     saveMemos(memos);
   }, [memos]);
+
+  React.useEffect(() => {
+    if (stageIds.length > 0 || dockIds.length === 0) {
+      return;
+    }
+
+    const [nextStageSlotId, ...remainingDockIds] = dockIds;
+    setStageIds([nextStageSlotId]);
+    setDockIds(remainingDockIds);
+    setActiveSlotId(nextStageSlotId);
+  }, [dockIds, stageIds.length]);
 
   React.useEffect(() => {
     let isMounted = true;
@@ -225,16 +255,16 @@ function App() {
   const unpinnedMemos = sortedMemos.filter((memo) => !memo.pinned);
   const selectedMemo = selectedMemoId ? (memos.find((memo) => memo.id === selectedMemoId) ?? null) : null;
 
-  const updateProviderNavigationState = React.useCallback((providerId: ProviderId) => {
-    const webview = webviewRefs.current[providerId];
+  const updateSlotNavigationState = React.useCallback((slotId: string) => {
+    const webview = webviewRefs.current[slotId];
 
-    if (!webview || !webview.isConnected || !webviewReadyRef.current[providerId]) {
+    if (!webview || !webview.isConnected || !webviewReadyRef.current[slotId]) {
       setNavigationStates((current) => ({
         ...current,
-        [providerId]: {
+        [slotId]: {
           canGoBack: false,
           canGoForward: false,
-          isDomReady: Boolean(webviewReadyRef.current[providerId]),
+          isDomReady: Boolean(webviewReadyRef.current[slotId]),
         },
       }));
       return;
@@ -246,47 +276,49 @@ function App() {
 
       setNavigationStates((current) => ({
         ...current,
-        [providerId]: {
+        [slotId]: {
           canGoBack,
           canGoForward,
           isDomReady: true,
         },
       }));
     } catch (error) {
-      console.warn('Failed to read webview navigation state', providerId, error);
+      console.warn('Failed to read webview navigation state', slotId, error);
       setNavigationStates((current) => ({
         ...current,
-        [providerId]: {
+        [slotId]: {
           canGoBack: false,
           canGoForward: false,
-          isDomReady: Boolean(webviewReadyRef.current[providerId]),
+          isDomReady: Boolean(webviewReadyRef.current[slotId]),
         },
       }));
     }
   }, []);
 
-  const clearProviderNavigationState = React.useCallback((providerId: ProviderId) => {
+  const clearSlotNavigationState = React.useCallback((slotId: string) => {
     setNavigationStates((current) => {
       const next = { ...current };
-      delete next[providerId];
+      delete next[slotId];
       return next;
     });
   }, []);
 
   const attachNavigationTracker = React.useCallback(
-    (providerId: ProviderId) => (webview: TrackedProviderWebview | null) => {
+    (slot: Slot) => (webview: TrackedProviderWebview | null) => {
+      const { id: slotId, providerId } = slot;
+
       if (!webview) {
-        delete webviewRefs.current[providerId];
-        delete webviewReadyRef.current[providerId];
+        delete webviewRefs.current[slotId];
+        delete webviewReadyRef.current[slotId];
         return;
       }
 
-      webviewRefs.current[providerId] = webview;
+      webviewRefs.current[slotId] = webview;
 
-      if (webview.dataset.omniTrackedProvider !== providerId) {
+      if (webview.dataset.omniTrackedSlot !== slotId) {
         webview.addEventListener('dom-ready', () => {
-          webviewReadyRef.current[providerId] = true;
-          updateProviderNavigationState(providerId);
+          webviewReadyRef.current[slotId] = true;
+          updateSlotNavigationState(slotId);
         });
 
         const saveCurrentUrl = (event: WebviewNavigationEvent) => {
@@ -294,26 +326,35 @@ function App() {
 
           if (navigatedUrl) {
             saveProviderUrl(providerId, navigatedUrl);
+            setSlots((currentSlots) =>
+              currentSlots.map((currentSlot) => (currentSlot.id === slotId ? { ...currentSlot, currentUrl: navigatedUrl } : currentSlot)),
+            );
           }
 
-          updateProviderNavigationState(providerId);
+          updateSlotNavigationState(slotId);
         };
 
         webview.addEventListener('did-navigate', saveCurrentUrl);
         webview.addEventListener('did-navigate-in-page', saveCurrentUrl);
-        webview.addEventListener('did-finish-load', () => updateProviderNavigationState(providerId));
+        webview.addEventListener('did-finish-load', () => updateSlotNavigationState(slotId));
+        webview.addEventListener('page-title-updated', (event: Event & { title?: string }) => {
+          const title = typeof event.title === 'string' && event.title.trim() ? event.title.trim() : getProviderConfig(providerId).label;
+          setSlots((currentSlots) =>
+            currentSlots.map((currentSlot) => (currentSlot.id === slotId ? { ...currentSlot, title } : currentSlot)),
+          );
+        });
         webview.addEventListener('did-fail-load', (event: WebviewNavigationEvent) => {
           if (event.isMainFrame === false || event.errorCode === -3) {
             return;
           }
 
-          updateProviderNavigationState(providerId);
+          updateSlotNavigationState(slotId);
           setNavigationNotice(LOAD_FAILURE_MESSAGE);
         });
-        webview.dataset.omniTrackedProvider = providerId;
+        webview.dataset.omniTrackedSlot = slotId;
       }
 
-      if (webview.dataset.omniMemoProvider !== providerId) {
+      if (webview.dataset.omniMemoSlot !== slotId) {
         webview.addEventListener('ipc-message', (event: WebviewIpcMessageEvent) => {
           if (event.channel !== 'omni-save-memo') {
             return;
@@ -339,16 +380,16 @@ function App() {
             ...currentMemos,
           ]);
         });
-        webview.dataset.omniMemoProvider = providerId;
+        webview.dataset.omniMemoSlot = slotId;
       }
     },
-    [updateProviderNavigationState],
+    [updateSlotNavigationState],
   );
 
-  const getProviderWebviewRef = React.useCallback(
-    (providerId: ProviderId) => {
-      webviewRefCallbacks.current[providerId] ??= attachNavigationTracker(providerId);
-      return webviewRefCallbacks.current[providerId];
+  const getSlotWebviewRef = React.useCallback(
+    (slot: Slot) => {
+      webviewRefCallbacks.current[slot.id] ??= attachNavigationTracker(slot);
+      return webviewRefCallbacks.current[slot.id];
     },
     [attachNavigationTracker],
   );
@@ -365,42 +406,44 @@ function App() {
 
       setBroadcastStatuses((currentStatuses) => {
         const nextStatuses = { ...currentStatuses };
-        broadcastProviders.forEach((provider) => {
-          nextStatuses[provider.id] = { state: 'pending', message: 'Sending...' };
+        stageSlots.forEach((slot) => {
+          nextStatuses[slot.id] = { state: 'pending', message: 'Sending...' };
         });
         return nextStatuses;
       });
 
       const settledResults = await Promise.allSettled(
-        broadcastProviders.map(async (provider): Promise<SendResult> => {
-          const webview = webviewRefs.current[provider.id];
+        stageSlots.map(async (slot): Promise<SendResult> => {
+          const provider = getProviderConfig(slot.providerId);
+          const webview = webviewRefs.current[slot.id];
 
           if (!webview) {
             console.warn('[Omni broadcast]', provider.label, 'webview ref missing');
             return {
               ok: false,
-              providerId: provider.id,
+              providerId: slot.providerId,
               message: 'webview not ready',
             };
           }
 
-          return providerAdapters[provider.id].sendMessage(webview, messageText);
+          return providerAdapters[slot.providerId].sendMessage(webview, messageText);
         }),
       );
 
       const nextStatuses = { ...broadcastStatuses };
 
       settledResults.forEach((result, index) => {
-        const provider = broadcastProviders[index];
+        const slot = stageSlots[index];
+        const provider = getProviderConfig(slot.providerId);
 
         if (result.status === 'rejected') {
           const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
           console.error('[Omni broadcast]', provider.label, reason);
-          nextStatuses[provider.id] = { state: 'failed', message: reason };
+          nextStatuses[slot.id] = { state: 'failed', message: reason };
           return;
         }
 
-        nextStatuses[provider.id] = {
+        nextStatuses[slot.id] = {
           state: result.value.ok ? 'sent' : 'failed',
           message: result.value.message,
         };
@@ -409,7 +452,7 @@ function App() {
       setBroadcastStatuses(nextStatuses);
       setBroadcastText('');
     },
-    [broadcastProviders, broadcastStatuses, broadcastText],
+    [broadcastStatuses, broadcastText, stageSlots],
   );
 
   const handleBroadcastKeyDown = React.useCallback(
@@ -424,13 +467,81 @@ function App() {
     [handleBroadcastSubmit],
   );
 
-  const handleWorkspaceSelect = React.useCallback((providerId: ProviderId) => {
-    setActiveProviderId(providerId);
+  const moveSlotToStage = React.useCallback((slotId: string) => {
     setMemoPanelOpen(false);
-    setCollapsedProviders((current) => ({
-      ...current,
-      [providerId]: false,
-    }));
+    setActiveSlotId(slotId);
+
+    if (!dockIds.includes(slotId) || stageIds.includes(slotId)) {
+      return;
+    }
+
+    const nextDockIds = dockIds.filter((currentSlotId) => currentSlotId !== slotId);
+
+    if (stageIds.length >= MAX_STAGE_SLOTS) {
+      const evictedSlotId = stageIds[stageIds.length - 1];
+      setStageIds([...stageIds.slice(0, MAX_STAGE_SLOTS - 1), slotId]);
+      setDockIds([...nextDockIds, evictedSlotId]);
+      return;
+    }
+
+    setStageIds([...stageIds, slotId]);
+    setDockIds(nextDockIds);
+  }, [dockIds, stageIds]);
+
+  const handleWorkspaceSelect = React.useCallback((slotId: string) => {
+    if (dockIds.includes(slotId)) {
+      moveSlotToStage(slotId);
+      return;
+    }
+
+    setActiveSlotId(slotId);
+    setMemoPanelOpen(false);
+  }, [dockIds, moveSlotToStage]);
+
+  const moveSlotToDock = React.useCallback((slotId: string) => {
+    if (stageIds.length <= 1) {
+      return;
+    }
+
+    setStageIds((currentStageIds) => currentStageIds.filter((currentSlotId) => currentSlotId !== slotId));
+    setDockIds((currentDockIds) => (currentDockIds.includes(slotId) ? currentDockIds : [...currentDockIds, slotId]));
+    setActiveSlotId((currentActiveSlotId) => {
+      if (currentActiveSlotId !== slotId) {
+        return currentActiveSlotId;
+      }
+
+      const nextStageSlotId = stageIds.find((currentSlotId) => currentSlotId !== slotId);
+      return nextStageSlotId ?? dockIds[0] ?? currentActiveSlotId;
+    });
+  }, [dockIds, stageIds]);
+
+  const closeSlot = React.useCallback((slotId: string) => {
+    delete webviewRefs.current[slotId];
+    delete webviewReadyRef.current[slotId];
+    delete webviewRefCallbacks.current[slotId];
+
+    setSlots((currentSlots) => currentSlots.filter((slot) => slot.id !== slotId));
+    setStageIds((currentStageIds) => currentStageIds.filter((currentSlotId) => currentSlotId !== slotId));
+    setDockIds((currentDockIds) => currentDockIds.filter((currentSlotId) => currentSlotId !== slotId));
+    setBroadcastStatuses((currentStatuses) => {
+      const nextStatuses = { ...currentStatuses };
+      delete nextStatuses[slotId];
+      return nextStatuses;
+    });
+    clearSlotNavigationState(slotId);
+    setActiveSlotId((currentActiveSlotId) => {
+      if (currentActiveSlotId !== slotId) {
+        return currentActiveSlotId;
+      }
+
+      const nextSlot = slots.find((slot) => slot.id !== slotId);
+      return nextSlot?.id ?? '';
+    });
+  }, [clearSlotNavigationState, slots]);
+
+  const handleAddSlot = React.useCallback(() => {
+    // TODO: Open model selection modal and create a new slot.
+    console.log('[Omni slots] add slot placeholder');
   }, []);
 
   const handleManualMemoSave = React.useCallback(() => {
@@ -518,22 +629,22 @@ function App() {
       return;
     }
 
-    const providerId = memo.provider;
+    const sourceSlot = slots.find((slot) => slot.providerId === memo.provider);
 
-    if (!openProviderIds.includes(providerId)) {
+    if (!sourceSlot) {
       return;
     }
 
-    setActiveProviderId(providerId);
+    if (dockIds.includes(sourceSlot.id)) {
+      moveSlotToStage(sourceSlot.id);
+    }
+
+    setActiveSlotId(sourceSlot.id);
     setMemoPanelOpen(false);
     setNavigationNotice('');
     closeMemoDetail();
-    setCollapsedProviders((current) => ({
-      ...current,
-      [providerId]: false,
-    }));
-    webviewRefs.current[providerId]?.loadURL?.(memo.sourceUrl);
-  }, [closeMemoDetail, openProviderIds]);
+    webviewRefs.current[sourceSlot.id]?.loadURL?.(memo.sourceUrl);
+  }, [closeMemoDetail, dockIds, moveSlotToStage, slots]);
 
   const duplicateMemo = React.useCallback((memo: Memo, titleValue = memo.title, contentValue = memo.content) => {
     const now = Date.now();
@@ -603,7 +714,7 @@ function App() {
           <button className="memo-action-button" type="button" title="복사" onClick={() => void copyMemo(memo.content)}>
             Copy
           </button>
-          <button className="memo-action-button danger" type="button" title="삭제" onClick={() => deleteMemo(memo.id)}>
+          <button className="memo-action-button danger" type="button" title="??젣" onClick={() => deleteMemo(memo.id)}>
             Delete
           </button>
         </div>
@@ -611,87 +722,37 @@ function App() {
     );
   };
 
-  const goProviderBack = React.useCallback(
-    (providerId: ProviderId) => {
-      if (!navigationStates[providerId]?.canGoBack) {
+  const goSlotBack = React.useCallback(
+    (slotId: string) => {
+      if (!navigationStates[slotId]?.canGoBack) {
         return;
       }
 
-      webviewRefs.current[providerId]?.goBack?.();
-      window.setTimeout(() => updateProviderNavigationState(providerId), 0);
+      webviewRefs.current[slotId]?.goBack?.();
+      window.setTimeout(() => updateSlotNavigationState(slotId), 0);
     },
-    [navigationStates, updateProviderNavigationState],
+    [navigationStates, updateSlotNavigationState],
   );
 
-  const goProviderForward = React.useCallback(
-    (providerId: ProviderId) => {
-      if (!navigationStates[providerId]?.canGoForward) {
+  const goSlotForward = React.useCallback(
+    (slotId: string) => {
+      if (!navigationStates[slotId]?.canGoForward) {
         return;
       }
 
-      webviewRefs.current[providerId]?.goForward?.();
-      window.setTimeout(() => updateProviderNavigationState(providerId), 0);
+      webviewRefs.current[slotId]?.goForward?.();
+      window.setTimeout(() => updateSlotNavigationState(slotId), 0);
     },
-    [navigationStates, updateProviderNavigationState],
+    [navigationStates, updateSlotNavigationState],
   );
 
-  const reloadProvider = React.useCallback((providerId: ProviderId) => {
-    webviewRefs.current[providerId]?.reload?.();
+  const reloadSlot = React.useCallback((slotId: string) => {
+    webviewRefs.current[slotId]?.reload?.();
   }, []);
 
-  const startProviderNewChat = React.useCallback((providerId: ProviderId) => {
-    webviewRefs.current[providerId]?.loadURL?.(providerAdapters[providerId].newChatUrl);
+  const startSlotNewChat = React.useCallback((slot: Slot) => {
+    webviewRefs.current[slot.id]?.loadURL?.(providerAdapters[slot.providerId].newChatUrl);
   }, []);
-
-  const closeProviderSlot = React.useCallback((providerId: ProviderId) => {
-    delete webviewRefs.current[providerId];
-    delete webviewReadyRef.current[providerId];
-    delete webviewRefCallbacks.current[providerId];
-    setOpenProviderIds((currentProviderIds) => {
-      const nextProviderIds = currentProviderIds.filter((currentProviderId) => currentProviderId !== providerId);
-
-      if (activeProviderId === providerId) {
-        const nextActiveProviderId = nextProviderIds[0] ?? null;
-
-        if (nextActiveProviderId) {
-          setActiveProviderId(nextActiveProviderId);
-        } else {
-          setMemoPanelOpen(true);
-        }
-      }
-
-      return nextProviderIds;
-    });
-    setCollapsedProviders((current) => ({
-      ...current,
-      [providerId]: false,
-    }));
-    clearProviderNavigationState(providerId);
-  }, [activeProviderId, clearProviderNavigationState]);
-
-  const toggleProviderCollapsed = React.useCallback((providerId: ProviderId) => {
-    setCollapsedProviders((current) => {
-      if (current[providerId]) {
-        setActiveProviderId(providerId);
-        return {
-          ...current,
-          [providerId]: false,
-        };
-      }
-
-      const otherProviderId = openProviderIds.find((currentProviderId) => currentProviderId !== providerId);
-
-      if (!otherProviderId || current[otherProviderId]) {
-        return current;
-      }
-
-      setActiveProviderId(otherProviderId);
-      return {
-        ...current,
-        [providerId]: true,
-      };
-    });
-  }, [openProviderIds]);
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -708,18 +769,22 @@ function App() {
           <div className="brand">Omni</div>
         </div>
         <nav className="workspace-list" aria-label="Workspaces">
-          {openProviders.map((provider) => (
+          {slots.map((slot) => {
+            const provider = getProviderConfig(slot.providerId);
+
+            return (
             <button
-              key={provider.id}
-              className={`workspace-item ${!memoPanelOpen && provider.id === activeProviderId ? 'active' : ''}`}
+              key={slot.id}
+              className={`workspace-item ${!memoPanelOpen && slot.id === activeSlotId ? 'active' : ''}`}
               type="button"
               title={provider.label}
-              onClick={() => handleWorkspaceSelect(provider.id)}
+              onClick={() => handleWorkspaceSelect(slot.id)}
             >
               <ProviderIcon providerId={provider.id} label={provider.label} className="workspace-icon" />
               <span className="workspace-label">{provider.label}</span>
             </button>
-          ))}
+            );
+          })}
           <button
             className={`workspace-item ${memoPanelOpen ? 'active' : ''}`}
             type="button"
@@ -737,19 +802,23 @@ function App() {
       <main className="main-area">
         <header className="topbar" aria-label="Workspace status">
           <div className="topbar-tabs" role="tablist" aria-label="Workspace tabs">
-            {openProviders.map((provider) => (
+            {slots.map((slot) => {
+              const provider = getProviderConfig(slot.providerId);
+
+              return (
               <button
-                key={provider.id}
-                className={`topbar-tab ${!memoPanelOpen && provider.id === activeProviderId ? 'active' : ''}`}
+                key={slot.id}
+                className={`topbar-tab ${!memoPanelOpen && slot.id === activeSlotId ? 'active' : ''}`}
                 type="button"
                 role="tab"
-                aria-selected={!memoPanelOpen && provider.id === activeProviderId}
-                onClick={() => handleWorkspaceSelect(provider.id)}
+                aria-selected={!memoPanelOpen && slot.id === activeSlotId}
+                onClick={() => handleWorkspaceSelect(slot.id)}
               >
                 <ProviderIcon providerId={provider.id} label={provider.label} />
                 {provider.label}
               </button>
-            ))}
+              );
+            })}
             <button
               className={`topbar-tab ${memoPanelOpen ? 'active' : ''}`}
               type="button"
@@ -777,60 +846,144 @@ function App() {
           aria-label="Claude, ChatGPT, and Gemini webviews"
           aria-hidden={memoPanelOpen}
         >
-          {webviewCapturePreloadUrl ? openProviders.map((provider) => {
-            const isCollapsed = collapsedProviders[provider.id];
-            const canCollapse =
-              !isCollapsed && openProviders.some((other) => other.id !== provider.id && !collapsedProviders[other.id]);
-            const navigationState = navigationStates[provider.id] ?? {
-              canGoBack: false,
-              canGoForward: false,
-              isDomReady: false,
-            };
-
-            return (
-              <div key={provider.id} className={`provider-pane ${isCollapsed ? 'collapsed' : 'expanded'}`}>
-                <SlotHeader
-                  providerId={provider.id}
-                  label={provider.label}
-                  isCollapsed={isCollapsed}
-                  canCollapse={canCollapse}
-                  canGoBack={navigationState.canGoBack}
-                  canGoForward={navigationState.canGoForward}
-                  onBack={() => goProviderBack(provider.id)}
-                  onForward={() => goProviderForward(provider.id)}
-                  onReload={() => reloadProvider(provider.id)}
-                  onHome={() => startProviderNewChat(provider.id)}
-                  onToggleCollapse={() => toggleProviderCollapsed(provider.id)}
-                  onClose={() => closeProviderSlot(provider.id)}
-                />
-                <webview
-                  className="provider-webview"
-                  src={initialProviderUrls[provider.id]}
-                  partition={provider.partition}
-                  preload={webviewCapturePreloadUrl?.startsWith('file:') ? webviewCapturePreloadUrl : undefined}
-                  allowpopups={'true' as unknown as boolean}
-                  ref={getProviderWebviewRef(provider.id)}
-                />
+          {webviewCapturePreloadUrl ? (
+            <>
+              <div className="stage-header">
+                <div className="stage-title">Stage</div>
+                {stageIds.length === MAX_STAGE_SLOTS && (
+                  <button
+                    className="stage-layout-toggle"
+                    type="button"
+                    title={layoutMode === 'row' ? 'Switch to 2x2 grid' : 'Switch to row'}
+                    aria-label={layoutMode === 'row' ? 'Switch to 2x2 grid' : 'Switch to row'}
+                    onClick={() => setLayoutMode((currentMode) => (currentMode === 'row' ? 'grid2x2' : 'row'))}
+                  >
+                    {layoutMode === 'row' ? '▦' : '▤'}
+                  </button>
+                )}
               </div>
-            );
-          }) : <div className="webview-loading">Preparing workspace...</div>}
+              <div className={`stage-grid ${isStageGrid ? 'grid2x2' : 'row'}`} style={stageGridStyle}>
+                {stageIds.length === 0 && <div className="stage-empty">Open a docked slot to start.</div>}
+                {slots.map((slot) => {
+                  const provider = getProviderConfig(slot.providerId);
+                  const stageIndex = stageIds.indexOf(slot.id);
+                  const isInStage = stageIndex >= 0;
+                  const navigationState = navigationStates[slot.id] ?? {
+                    canGoBack: false,
+                    canGoForward: false,
+                    isDomReady: false,
+                  };
+
+                  return (
+                    <div
+                      key={slot.id}
+                      className="provider-pane expanded"
+                      style={{ display: isInStage ? undefined : 'none', order: isInStage ? stageIndex : undefined }}
+                    >
+                      <SlotHeader
+                        providerId={slot.providerId}
+                        label={provider.label}
+                        canDock={stageIds.length > 1}
+                        canGoBack={navigationState.canGoBack}
+                        canGoForward={navigationState.canGoForward}
+                        onBack={() => goSlotBack(slot.id)}
+                        onForward={() => goSlotForward(slot.id)}
+                        onReload={() => reloadSlot(slot.id)}
+                        onHome={() => startSlotNewChat(slot)}
+                        onDock={() => moveSlotToDock(slot.id)}
+                        onClose={() => closeSlot(slot.id)}
+                      />
+                      <webview
+                        className="provider-webview"
+                        src={slot.currentUrl}
+                        partition={provider.partition}
+                        preload={webviewCapturePreloadUrl?.startsWith('file:') ? webviewCapturePreloadUrl : undefined}
+                        allowpopups={'true' as unknown as boolean}
+                        ref={getSlotWebviewRef(slot)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <div className="webview-loading">Preparing workspace...</div>
+          )}
         </section>
 
-        <form
-          className={`broadcast-bar ${broadcastCollapsed ? 'collapsed' : ''} ${memoPanelOpen ? 'view-hidden' : ''}`}
-          aria-label="Broadcast prompt"
-          onSubmit={handleBroadcastSubmit}
-        >
-          <button
-            className="broadcast-toggle"
-            type="button"
-            aria-label={broadcastCollapsed ? 'Expand broadcast bar' : 'Collapse broadcast bar'}
-            onClick={() => setBroadcastCollapsed((collapsed) => !collapsed)}
-          >
-            {broadcastCollapsed ? '^' : 'v'}
-          </button>
+        <div className={`workspace-bottom ${memoPanelOpen ? 'view-hidden' : ''}`}>
+          <div className="dock-row">
+            {broadcastCollapsed && (
+              <button
+                className="broadcast-toggle dock-broadcast-toggle"
+                type="button"
+                aria-label="Expand broadcast bar"
+                onClick={() => setBroadcastCollapsed(false)}
+              >
+                ^
+              </button>
+            )}
+            <section className={`dock ${dockMinimized ? 'minimized' : ''}`} aria-label="Dock">
+            <div className="dock-header">
+              <div className="dock-title-row">
+                <button
+                  className="dock-toggle"
+                  type="button"
+                  title={dockMinimized ? 'Expand dock' : 'Minimize dock'}
+                  aria-label={dockMinimized ? 'Expand dock' : 'Minimize dock'}
+                  onClick={() => setDockMinimized((minimized) => !minimized)}
+                >
+                  {dockMinimized ? '^' : 'v'}
+                </button>
+                <span className="dock-title">Dock</span>
+                <span className="slot-counter">{slots.length}/{MAX_SLOTS}</span>
+              </div>
+            </div>
+            <div className="dock-list">
+              {dockSlots.map((slot) => {
+                const provider = getProviderConfig(slot.providerId);
+
+                return (
+                  <button
+                    key={slot.id}
+                    className="dock-chip"
+                    type="button"
+                    title={`${provider.label} - ${slot.title}`}
+                    onClick={() => moveSlotToStage(slot.id)}
+                  >
+                    <ProviderIcon providerId={slot.providerId} label={provider.label} />
+                    {!dockMinimized && (
+                      <span className="dock-chip-text">
+                        <span className="dock-chip-provider">{provider.label}</span>
+                        <span className="dock-chip-title">{slot.title}</span>
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {slots.length < MAX_SLOTS && (
+              <button className="dock-add-button dock-add-button-end" type="button" title="Add slot" aria-label="Add slot" onClick={handleAddSlot}>
+                +
+              </button>
+            )}
+            </section>
+          </div>
+
           {!broadcastCollapsed && (
-            <>
+            <form
+              className="broadcast-bar"
+              aria-label="Broadcast prompt"
+              onSubmit={handleBroadcastSubmit}
+            >
+              <button
+                className="broadcast-toggle"
+                type="button"
+                aria-label="Collapse broadcast bar"
+                onClick={() => setBroadcastCollapsed(true)}
+              >
+                v
+              </button>
               <textarea
                 className="broadcast-input"
                 value={broadcastText}
@@ -842,9 +995,9 @@ function App() {
               <button className="broadcast-button" type="submit" disabled={!broadcastText.trim()}>
                 Send
               </button>
-            </>
+            </form>
           )}
-        </form>
+        </div>
 
         <section className={`memos-page ${memoPanelOpen ? '' : 'view-hidden'}`} aria-label="Memos">
           <div className="memos-page-inner">
