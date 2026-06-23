@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './styles.css';
+import { ProviderIcon } from './ProviderIcon';
 import { SlotHeader } from './SlotHeader';
 import { providerAdapters, type ProviderWebview, type SendResult } from './providerAdapters';
 import { getInitialProviderUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
@@ -312,7 +313,7 @@ function App() {
         webview.dataset.omniTrackedProvider = providerId;
       }
 
-      if (providerId !== 'gemini' && webview.dataset.omniMemoProvider !== providerId) {
+      if (webview.dataset.omniMemoProvider !== providerId) {
         webview.addEventListener('ipc-message', (event: WebviewIpcMessageEvent) => {
           if (event.channel !== 'omni-save-memo') {
             return;
@@ -553,6 +554,7 @@ function App() {
 
   const renderMemoCard = (memo: Memo) => {
     const sourceHint = getSourceHint(memo);
+    const providerLabel = getMemoProviderLabel(memo);
 
     return (
       <article
@@ -568,7 +570,10 @@ function App() {
         }}
       >
         <div className="memo-card-meta">
-          <span className={`memo-provider ${memo.provider ?? 'manual'}`}>{getMemoProviderLabel(memo)}</span>
+          <span className={`memo-provider ${memo.provider ?? 'manual'}`}>
+            {memo.provider && <ProviderIcon providerId={memo.provider} label={providerLabel} className="memo-provider-icon" />}
+            {providerLabel}
+          </span>
         </div>
 
         <div className="memo-card-body">
@@ -711,9 +716,7 @@ function App() {
               title={provider.label}
               onClick={() => handleWorkspaceSelect(provider.id)}
             >
-              <span className="workspace-icon" aria-hidden="true">
-                {provider.label[0]}
-              </span>
+              <ProviderIcon providerId={provider.id} label={provider.label} className="workspace-icon" />
               <span className="workspace-label">{provider.label}</span>
             </button>
           ))}
@@ -743,6 +746,7 @@ function App() {
                 aria-selected={!memoPanelOpen && provider.id === activeProviderId}
                 onClick={() => handleWorkspaceSelect(provider.id)}
               >
+                <ProviderIcon providerId={provider.id} label={provider.label} />
                 {provider.label}
               </button>
             ))}
@@ -906,7 +910,16 @@ function App() {
             >
               <header className="memo-modal-header">
                 <div className="memo-modal-title-group">
-                  <span className={`memo-provider ${selectedMemo.provider ?? 'manual'}`}>{getMemoProviderLabel(selectedMemo)}</span>
+                  <span className={`memo-provider ${selectedMemo.provider ?? 'manual'}`}>
+                    {selectedMemo.provider && (
+                      <ProviderIcon
+                        providerId={selectedMemo.provider}
+                        label={getMemoProviderLabel(selectedMemo)}
+                        className="memo-provider-icon"
+                      />
+                    )}
+                    {getMemoProviderLabel(selectedMemo)}
+                  </span>
                   {editingMemoId === selectedMemo.id ? (
                     <input
                       className="memo-title-input"

@@ -1,4 +1,5 @@
 import type { ProviderId } from './providerUrlStore';
+import { ProviderIcon } from './ProviderIcon';
 
 type SlotHeaderProps = {
   providerId: ProviderId;
@@ -55,9 +56,7 @@ export function SlotHeader({
       )}
 
       <div className="slot-provider">
-        <span className={`slot-provider-icon ${providerId}`} aria-hidden="true">
-          {label[0]}
-        </span>
+        <ProviderIcon providerId={providerId} label={label} />
         <span className="slot-provider-label">{label}</span>
       </div>
 
