@@ -493,9 +493,6 @@ function App() {
           <button className="memo-action-button" type="button" title="복사" onClick={() => void copyMemo(memo.content)}>
             Copy
           </button>
-          <button className="memo-action-button" type="button" title="편집" onClick={() => startEditingMemo(memo)}>
-            Edit
-          </button>
           <button className="memo-action-button danger" type="button" title="삭제" onClick={() => deleteMemo(memo.id)}>
             Delete
           </button>
@@ -754,7 +751,21 @@ function App() {
                       onChange={(event) => setEditingTitle(event.target.value)}
                     />
                   ) : (
-                    <h2 id="memo-modal-title">{getMemoDisplayTitle(selectedMemo)}</h2>
+                    <h2
+                      id="memo-modal-title"
+                      className="memo-editable-title"
+                      tabIndex={0}
+                      title="Click to edit"
+                      onClick={() => startEditingMemo(selectedMemo)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          startEditingMemo(selectedMemo);
+                        }
+                      }}
+                    >
+                      {getMemoDisplayTitle(selectedMemo)}
+                    </h2>
                   )}
                 </div>
                 <button className="memo-modal-close" type="button" aria-label="닫기" onClick={closeMemoDetail}>
@@ -771,7 +782,20 @@ function App() {
                     onChange={(event) => setEditingContent(event.target.value)}
                   />
                 ) : (
-                  <p className="memo-modal-content">{selectedMemo.content}</p>
+                  <p
+                    className="memo-modal-content memo-editable-content"
+                    tabIndex={0}
+                    title="Click to edit"
+                    onClick={() => startEditingMemo(selectedMemo)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        startEditingMemo(selectedMemo);
+                      }
+                    }}
+                  >
+                    {selectedMemo.content}
+                  </p>
                 )}
                 {getSourceHint(selectedMemo) && <div className="memo-modal-source">{getSourceHint(selectedMemo)}</div>}
               </div>
@@ -807,11 +831,7 @@ function App() {
                         취소
                       </button>
                     </>
-                  ) : (
-                    <button className="memo-action-button" type="button" onClick={() => startEditingMemo(selectedMemo)}>
-                      Edit
-                    </button>
-                  )}
+                  ) : null}
                   <button
                     className="memo-action-button"
                     type="button"

@@ -139,6 +139,8 @@ button { font: inherit; }
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr) auto;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   position: relative;
 }
 
@@ -389,6 +391,7 @@ button { font: inherit; }
   grid-row: 2 / 4;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   overflow: auto;
   color: #f7f3ea;
   background: #101010;
@@ -739,7 +742,7 @@ button { font: inherit; }
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(720px, 100%);
-  max-height: min(760px, calc(100vh - 80px));
+  max-height: calc(100% - 48px);
   overflow: hidden;
   border: 1px solid #3a3a3a;
   border-radius: 8px;
@@ -789,6 +792,19 @@ button { font: inherit; }
   color: #ffffff;
   font-size: 22px;
   line-height: 1.25;
+}
+
+.memo-editable-title,
+.memo-editable-content {
+  cursor: text;
+}
+
+.memo-editable-title:hover,
+.memo-editable-title:focus,
+.memo-editable-content:hover,
+.memo-editable-content:focus {
+  outline: 1px solid #5b4a3e;
+  outline-offset: 4px;
 }
 
 .memo-modal-close {
