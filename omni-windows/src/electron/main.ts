@@ -1,11 +1,13 @@
-import { app, BrowserWindow, session } from 'electron';
+import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CLAUDE_PARTITION = 'persist:claude';
 const CHATGPT_PARTITION = 'persist:chatgpt';
+const WEBVIEW_CAPTURE_PRELOAD_PATH = path.join(__dirname, 'webviewCapture.cjs');
+const WEBVIEW_CAPTURE_PRELOAD_URL = pathToFileURL(WEBVIEW_CAPTURE_PRELOAD_PATH).toString();
 const PROVIDER_PARTITIONS = [CLAUDE_PARTITION, CHATGPT_PARTITION] as const;
 const ELECTRON_USER_AGENT_TOKEN = /\sElectron\/\S+/g;
 
@@ -50,9 +52,10 @@ function createMainWindow(): void {
 app.whenReady().then(() => {
   // Configure persistent provider sessions before any webContents are created.
   configureProviderUserAgents();
+  ipcMain.handle('omni:get-webview-capture-preload-url', () => WEBVIEW_CAPTURE_PRELOAD_URL);
   app.on('web-contents-created', (_event, contents) => {
     contents.on('will-attach-webview', (_attachEvent, webPreferences) => {
-      webPreferences.preload = path.join(__dirname, 'webviewCapture.cjs');
+      webPreferences.preload = WEBVIEW_CAPTURE_PRELOAD_PATH;
     });
   });
   createMainWindow();

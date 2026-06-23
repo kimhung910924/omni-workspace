@@ -71,7 +71,20 @@ function getMemoProviderLabel(memo: Memo): string {
 }
 
 function getSourceHint(memo: Memo): string {
-  return memo.sourceTitle || memo.sourceUrl || '';
+  if (memo.sourceTitle) {
+    return memo.sourceTitle;
+  }
+
+  if (!memo.sourceUrl) {
+    return '';
+  }
+
+  try {
+    const url = new URL(memo.sourceUrl);
+    return `${url.hostname}${url.pathname === '/' ? '' : url.pathname}`;
+  } catch {
+    return memo.sourceUrl;
+  }
 }
 
 function App() {
@@ -79,11 +92,13 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [memoPanelOpen, setMemoPanelOpen] = React.useState(false);
   const [memoSearch, setMemoSearch] = React.useState('');
+  const [manualMemoTitle, setManualMemoTitle] = React.useState('');
   const [manualMemoText, setManualMemoText] = React.useState('');
   const [editingMemoId, setEditingMemoId] = React.useState<string | null>(null);
   const [editingTitle, setEditingTitle] = React.useState('');
   const [editingContent, setEditingContent] = React.useState('');
   const [memos, setMemos] = React.useState<Memo[]>(() => loadMemos());
+  const [webviewCapturePreloadUrl, setWebviewCapturePreloadUrl] = React.useState<string | null>(null);
   const [collapsedProviders, setCollapsedProviders] = React.useState<Record<ProviderId, boolean>>({
     claude: false,
     chatgpt: false,
@@ -96,7 +111,6 @@ function App() {
   });
   const webviewRefs = React.useRef<Partial<Record<ProviderId, ProviderWebview>>>({});
   const activeProvider = PROVIDERS.find((provider) => provider.id === activeProviderId) ?? PROVIDERS[0];
-  const webviewCapturePreloadUrl = window.omni?.webviewCapturePreloadUrl;
   const initialProviderUrls = React.useMemo(
     () =>
       Object.fromEntries(
@@ -112,6 +126,25 @@ function App() {
     saveMemos(memos);
   }, [memos]);
 
+  React.useEffect(() => {
+    let isMounted = true;
+
+    window.omni
+      ?.getWebviewCapturePreloadUrl()
+      .then((preloadUrl) => {
+        if (isMounted) {
+          setWebviewCapturePreloadUrl(preloadUrl);
+        }
+      })
+      .catch((error: unknown) => {
+        console.error('[Omni memos] Failed to resolve webview preload URL', error);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const sortedMemos = React.useMemo(() => {
     const searchText = memoSearch.trim().toLowerCase();
 
@@ -124,6 +157,7 @@ function App() {
         return (
           memo.title.toLowerCase().includes(searchText) ||
           memo.content.toLowerCase().includes(searchText) ||
+          getMemoProviderLabel(memo).toLowerCase().includes(searchText) ||
           getSourceHint(memo).toLowerCase().includes(searchText)
         );
       })
@@ -181,7 +215,6 @@ function App() {
             }),
             ...currentMemos,
           ]);
-          setMemoPanelOpen(true);
         });
         webview.dataset.omniMemoProvider = providerId;
       }
@@ -275,6 +308,7 @@ function App() {
 
     setMemos((currentMemos) => [
       createMemo({
+        title: manualMemoTitle,
         content,
         provider: null,
         sourceUrl: null,
@@ -282,8 +316,9 @@ function App() {
       }),
       ...currentMemos,
     ]);
+    setManualMemoTitle('');
     setManualMemoText('');
-  }, [manualMemoText]);
+  }, [manualMemoText, manualMemoTitle]);
 
   const updateMemo = React.useCallback((memoId: string, updater: (memo: Memo) => Memo) => {
     setMemos((currentMemos) => currentMemos.map((memo) => (memo.id === memoId ? updater(memo) : memo)));
@@ -336,6 +371,7 @@ function App() {
     }
 
     setActiveProviderId(memo.provider);
+    setMemoPanelOpen(false);
     setCollapsedProviders((current) => ({
       ...current,
       [memo.provider as ProviderId]: false,
@@ -350,7 +386,7 @@ function App() {
     return (
       <article
         key={memo.id}
-        className={`memo-card ${memo.provider && memo.sourceUrl ? 'clickable' : ''}`}
+        className={`memo-card provider-${memo.provider ?? 'manual'} ${memo.provider && memo.sourceUrl ? 'clickable' : ''}`}
         onClick={() => navigateToMemoSource(memo)}
       >
         <div className="memo-card-meta">
@@ -483,7 +519,7 @@ function App() {
             className={`workspace-item ${memoPanelOpen ? 'active' : ''}`}
             type="button"
             title="메모"
-            onClick={() => setMemoPanelOpen((isOpen) => !isOpen)}
+            onClick={() => setMemoPanelOpen(true)}
           >
             <span className="workspace-icon" aria-hidden="true">
               M
@@ -495,12 +531,38 @@ function App() {
 
       <main className="main-area">
         <header className="topbar" aria-label="Workspace status">
-          <div className="topbar-title">Omni Windows</div>
+          <div className="topbar-tabs" role="tablist" aria-label="Workspace tabs">
+            {PROVIDERS.map((provider) => (
+              <button
+                key={provider.id}
+                className={`topbar-tab ${!memoPanelOpen && provider.id === activeProviderId ? 'active' : ''}`}
+                type="button"
+                role="tab"
+                aria-selected={!memoPanelOpen && provider.id === activeProviderId}
+                onClick={() => handleWorkspaceSelect(provider.id)}
+              >
+                {provider.label}
+              </button>
+            ))}
+            <button
+              className={`topbar-tab ${memoPanelOpen ? 'active' : ''}`}
+              type="button"
+              role="tab"
+              aria-selected={memoPanelOpen}
+              onClick={() => setMemoPanelOpen(true)}
+            >
+              Memos
+            </button>
+          </div>
           <div className="session-hint">Persistent session: {activeProvider.partition}</div>
         </header>
 
-        <section className="webview-panel" aria-label="Claude and ChatGPT webviews">
-          {PROVIDERS.map((provider) => {
+        <section
+          className={`webview-panel ${memoPanelOpen ? 'view-hidden' : ''}`}
+          aria-label="Claude and ChatGPT webviews"
+          aria-hidden={memoPanelOpen}
+        >
+          {webviewCapturePreloadUrl ? PROVIDERS.map((provider) => {
             const isCollapsed = collapsedProviders[provider.id];
             const canCollapse =
               !isCollapsed && PROVIDERS.some((other) => other.id !== provider.id && !collapsedProviders[other.id]);
@@ -535,11 +597,11 @@ function App() {
                 />
               </div>
             );
-          })}
+          }) : <div className="webview-loading">Preparing workspace...</div>}
         </section>
 
         <form
-          className={`broadcast-bar ${broadcastCollapsed ? 'collapsed' : ''}`}
+          className={`broadcast-bar ${broadcastCollapsed ? 'collapsed' : ''} ${memoPanelOpen ? 'view-hidden' : ''}`}
           aria-label="Broadcast prompt"
           onSubmit={handleBroadcastSubmit}
         >
@@ -568,45 +630,49 @@ function App() {
           )}
         </form>
 
-        {memoPanelOpen && (
-          <aside className="memo-panel" aria-label="Memos">
-            <div className="memo-panel-header">
-              <h2>메모</h2>
+        <section className={`memos-page ${memoPanelOpen ? '' : 'view-hidden'}`} aria-label="Memos">
+          <div className="memos-page-inner">
+            <div className="memos-page-header">
+              <div>
+                <h1>Memos</h1>
+                <p>채팅에서 저장한 메모와 직접 작성한 메모를 한곳에서 관리합니다.</p>
+              </div>
+              <input
+                className="memo-search"
+                value={memoSearch}
+                placeholder="Search title, content, provider, source"
+                onChange={(event) => setMemoSearch(event.target.value)}
+              />
+            </div>
+
+            <div className="manual-memo-composer">
+              <input
+                className="manual-memo-title"
+                value={manualMemoTitle}
+                placeholder="제목"
+                onChange={(event) => setManualMemoTitle(event.target.value)}
+              />
+              <textarea
+                className="manual-memo-input"
+                value={manualMemoText}
+                rows={4}
+                placeholder="직접 메모 작성"
+                onChange={(event) => setManualMemoText(event.target.value)}
+              />
               <button
-                className="memo-close-button"
+                className="manual-memo-save"
                 type="button"
-                aria-label="Close memos"
-                onClick={() => setMemoPanelOpen(false)}
+                disabled={!manualMemoText.trim()}
+                onClick={handleManualMemoSave}
               >
-                x
+                메모 저장하기
               </button>
             </div>
-            <input
-              className="memo-search"
-              value={memoSearch}
-              placeholder="제목 또는 내용 검색"
-              onChange={(event) => setMemoSearch(event.target.value)}
-            />
-            <textarea
-              className="manual-memo-input"
-              value={manualMemoText}
-              rows={4}
-              placeholder="직접 메모 작성"
-              onChange={(event) => setManualMemoText(event.target.value)}
-            />
-            <button
-              className="manual-memo-save"
-              type="button"
-              disabled={!manualMemoText.trim()}
-              onClick={handleManualMemoSave}
-            >
-              메모 저장하기
-            </button>
 
             <div className="memo-section">
               <h3>고정됨</h3>
               {pinnedMemos.length > 0 ? (
-                pinnedMemos.map(renderMemoCard)
+                <div className="memo-grid">{pinnedMemos.map(renderMemoCard)}</div>
               ) : (
                 <p className="memo-empty">고정된 메모가 없습니다.</p>
               )}
@@ -615,13 +681,13 @@ function App() {
             <div className="memo-section">
               <h3>메모</h3>
               {unpinnedMemos.length > 0 ? (
-                unpinnedMemos.map(renderMemoCard)
+                <div className="memo-grid">{unpinnedMemos.map(renderMemoCard)}</div>
               ) : (
                 <p className="memo-empty">저장된 메모가 없습니다.</p>
               )}
             </div>
-          </aside>
-        )}
+          </div>
+        </section>
       </main>
     </div>
   );
