@@ -6,9 +6,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CLAUDE_PARTITION = 'persist:claude';
 const CHATGPT_PARTITION = 'persist:chatgpt';
+const GEMINI_PARTITION = 'persist:gemini';
 const WEBVIEW_CAPTURE_PRELOAD_PATH = path.join(__dirname, 'webviewCapture.cjs');
 const WEBVIEW_CAPTURE_PRELOAD_URL = pathToFileURL(WEBVIEW_CAPTURE_PRELOAD_PATH).toString();
-const PROVIDER_PARTITIONS = [CLAUDE_PARTITION, CHATGPT_PARTITION] as const;
+const PROVIDER_PARTITIONS = [CLAUDE_PARTITION, CHATGPT_PARTITION, GEMINI_PARTITION] as const;
 const ELECTRON_USER_AGENT_TOKEN = /\sElectron\/\S+/g;
 
 function createDesktopChromeUserAgent(userAgent: string): string {

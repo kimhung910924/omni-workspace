@@ -4,6 +4,7 @@ interface Window {
   omni?: {
     claudePartition: string;
     chatgptPartition: string;
+    geminiPartition: string;
     getWebviewCapturePreloadUrl: () => Promise<string>;
   };
 }

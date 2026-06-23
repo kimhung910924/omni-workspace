@@ -340,10 +340,28 @@ button { font: inherit; }
   background: #6a4b35;
 }
 
+.slot-provider-icon.gemini {
+  background: #3b5f9f;
+}
+
 .slot-provider-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.gemini-pane-header {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px 6px;
+  border-bottom: 1px solid #303030;
+  background: #1d1d1d;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .provider-pane.collapsed .slot-header {

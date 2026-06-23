@@ -61,6 +61,12 @@ const PROVIDERS: Array<{
   },
 ];
 
+const GEMINI_PROVIDER = {
+  label: 'Gemini',
+  defaultUrl: 'https://gemini.google.com',
+  partition: window.omni?.geminiPartition ?? 'persist:gemini',
+};
+
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   claude: 'Claude',
   chatgpt: 'ChatGPT',
@@ -748,46 +754,67 @@ function App() {
 
         <section
           className={`webview-panel ${memoPanelOpen ? 'view-hidden' : ''}`}
-          aria-label="Claude and ChatGPT webviews"
+          aria-label="Claude, ChatGPT, and Gemini webviews"
           aria-hidden={memoPanelOpen}
         >
-          {webviewCapturePreloadUrl ? openProviders.map((provider) => {
-            const isCollapsed = collapsedProviders[provider.id];
-            const canCollapse =
-              !isCollapsed && openProviders.some((other) => other.id !== provider.id && !collapsedProviders[other.id]);
-            const navigationState = navigationStates[provider.id] ?? {
-              canGoBack: false,
-              canGoForward: false,
-              isDomReady: false,
-            };
+          {webviewCapturePreloadUrl ? (
+            <>
+              {openProviders.map((provider) => {
+                const isCollapsed = collapsedProviders[provider.id];
+                const canCollapse =
+                  !isCollapsed && openProviders.some((other) => other.id !== provider.id && !collapsedProviders[other.id]);
+                const navigationState = navigationStates[provider.id] ?? {
+                  canGoBack: false,
+                  canGoForward: false,
+                  isDomReady: false,
+                };
 
-            return (
-              <div key={provider.id} className={`provider-pane ${isCollapsed ? 'collapsed' : 'expanded'}`}>
-                <SlotHeader
-                  providerId={provider.id}
-                  label={provider.label}
-                  isCollapsed={isCollapsed}
-                  canCollapse={canCollapse}
-                  canGoBack={navigationState.canGoBack}
-                  canGoForward={navigationState.canGoForward}
-                  onBack={() => goProviderBack(provider.id)}
-                  onForward={() => goProviderForward(provider.id)}
-                  onReload={() => reloadProvider(provider.id)}
-                  onHome={() => startProviderNewChat(provider.id)}
-                  onToggleCollapse={() => toggleProviderCollapsed(provider.id)}
-                  onClose={() => closeProviderSlot(provider.id)}
-                />
+                return (
+                  <div key={provider.id} className={`provider-pane ${isCollapsed ? 'collapsed' : 'expanded'}`}>
+                    <SlotHeader
+                      providerId={provider.id}
+                      label={provider.label}
+                      isCollapsed={isCollapsed}
+                      canCollapse={canCollapse}
+                      canGoBack={navigationState.canGoBack}
+                      canGoForward={navigationState.canGoForward}
+                      onBack={() => goProviderBack(provider.id)}
+                      onForward={() => goProviderForward(provider.id)}
+                      onReload={() => reloadProvider(provider.id)}
+                      onHome={() => startProviderNewChat(provider.id)}
+                      onToggleCollapse={() => toggleProviderCollapsed(provider.id)}
+                      onClose={() => closeProviderSlot(provider.id)}
+                    />
+                    <webview
+                      className="provider-webview"
+                      src={initialProviderUrls[provider.id]}
+                      partition={provider.partition}
+                      preload={webviewCapturePreloadUrl?.startsWith('file:') ? webviewCapturePreloadUrl : undefined}
+                      allowpopups={'true' as unknown as boolean}
+                      ref={getProviderWebviewRef(provider.id)}
+                    />
+                  </div>
+                );
+              })}
+              <div className="provider-pane gemini-pane expanded">
+                <div className="gemini-pane-header">
+                  <span className="slot-provider-icon gemini" aria-hidden="true">
+                    G
+                  </span>
+                  <span className="slot-provider-label">{GEMINI_PROVIDER.label}</span>
+                </div>
                 <webview
                   className="provider-webview"
-                  src={initialProviderUrls[provider.id]}
-                  partition={provider.partition}
+                  src={GEMINI_PROVIDER.defaultUrl}
+                  partition={GEMINI_PROVIDER.partition}
                   preload={webviewCapturePreloadUrl?.startsWith('file:') ? webviewCapturePreloadUrl : undefined}
                   allowpopups={'true' as unknown as boolean}
-                  ref={getProviderWebviewRef(provider.id)}
                 />
               </div>
-            );
-          }) : <div className="webview-loading">Preparing workspace...</div>}
+            </>
+          ) : (
+            <div className="webview-loading">Preparing workspace...</div>
+          )}
         </section>
 
         <form
