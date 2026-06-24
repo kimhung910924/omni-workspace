@@ -72,6 +72,7 @@ type StagePointerDrag = {
 
 const MAX_SLOTS = 8;
 const MAX_STAGE_SLOTS = 4;
+const DEFAULT_STARTUP_PROVIDER_IDS: ProviderId[] = ['claude', 'chatgpt', 'gemini'];
 
 const PROVIDERS: Array<{
   id: ProviderId;
@@ -97,12 +98,26 @@ const PROVIDERS: Array<{
     defaultUrl: providerAdapters.gemini.startUrl,
     partition: window.omni?.geminiPartition ?? 'persist:gemini',
   },
+  {
+    id: 'grok',
+    label: providerAdapters.grok.label,
+    defaultUrl: providerAdapters.grok.startUrl,
+    partition: window.omni?.grokPartition ?? 'persist:grok',
+  },
+  {
+    id: 'perplexity',
+    label: providerAdapters.perplexity.label,
+    defaultUrl: providerAdapters.perplexity.startUrl,
+    partition: window.omni?.perplexityPartition ?? 'persist:perplexity',
+  },
 ];
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   claude: 'Claude',
   chatgpt: 'ChatGPT',
   gemini: 'Gemini',
+  grok: 'Grok',
+  perplexity: 'Perplexity',
 };
 
 function getProviderConfig(providerId: ProviderId) {
@@ -136,7 +151,7 @@ function createNewSlot(providerId: ProviderId): Slot {
 }
 
 function createInitialGroup(): Group {
-  const slots = PROVIDERS.map((provider) => createInitialSlot(provider.id));
+  const slots = DEFAULT_STARTUP_PROVIDER_IDS.map((providerId) => createInitialSlot(providerId));
 
   return {
     id: createId(),
@@ -168,10 +183,6 @@ function formatMemoDate(value: number): string {
 }
 
 function getMemoProviderLabel(memo: Memo): string {
-  if (memo.provider === 'gemini') {
-    return 'Gemini';
-  }
-
   return memo.provider ? PROVIDER_LABELS[memo.provider] : 'Private';
 }
 

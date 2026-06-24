@@ -5,6 +5,8 @@ interface Window {
     claudePartition: string;
     chatgptPartition: string;
     geminiPartition: string;
+    grokPartition: string;
+    perplexityPartition: string;
     getWebviewCapturePreloadUrl: () => Promise<string>;
   };
 }

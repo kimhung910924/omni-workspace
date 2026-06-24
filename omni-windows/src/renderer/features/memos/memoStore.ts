@@ -13,7 +13,12 @@ function isMemo(value: unknown): value is Memo {
     typeof memo.id === 'string' &&
     typeof memo.title === 'string' &&
     typeof memo.content === 'string' &&
-    (memo.provider === 'claude' || memo.provider === 'chatgpt' || memo.provider === 'gemini' || memo.provider === null) &&
+    (memo.provider === 'claude' ||
+      memo.provider === 'chatgpt' ||
+      memo.provider === 'gemini' ||
+      memo.provider === 'grok' ||
+      memo.provider === 'perplexity' ||
+      memo.provider === null) &&
     (typeof memo.sourceUrl === 'string' || memo.sourceUrl === null) &&
     (typeof memo.sourceTitle === 'string' || memo.sourceTitle === null) &&
     typeof memo.pinned === 'boolean' &&

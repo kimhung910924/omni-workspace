@@ -1,6 +1,6 @@
 import type { ProviderId } from '../../providerUrlStore';
 
-export type MemoProvider = ProviderId | 'gemini';
+export type MemoProvider = ProviderId;
 
 export type Memo = {
   id: string;

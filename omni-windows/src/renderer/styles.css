@@ -197,6 +197,14 @@ button { font: inherit; }
   background: #3b5f9f;
 }
 
+.provider-logo.grok.failed {
+  background: #101828;
+}
+
+.provider-logo.perplexity.failed {
+  background: #0f766e;
+}
+
 .workspace-icon {
   width: 24px;
   height: 24px;

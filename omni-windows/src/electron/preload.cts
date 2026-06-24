@@ -4,5 +4,7 @@ contextBridge.exposeInMainWorld('omni', {
   claudePartition: 'persist:claude',
   chatgptPartition: 'persist:chatgpt',
   geminiPartition: 'persist:gemini',
+  grokPartition: 'persist:grok',
+  perplexityPartition: 'persist:perplexity',
   getWebviewCapturePreloadUrl: () => ipcRenderer.invoke('omni:get-webview-capture-preload-url'),
 });
