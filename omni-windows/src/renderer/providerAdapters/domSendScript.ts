@@ -11,6 +11,7 @@ type DomSendConfig = {
 type DomSendResult = {
   ok: boolean;
   message: string;
+  needsNativeEnter?: boolean;
 };
 
 function createDomSendScript(config: DomSendConfig, text: string): string {
@@ -39,12 +40,33 @@ function createDomSendScript(config: DomSendConfig, text: string): string {
         return null;
       };
 
-      const dispatchInput = (element, inputType = 'insertText') => {
+      const isEnabledButton = (element) =>
+        element instanceof HTMLElement &&
+        !element.hasAttribute('disabled') &&
+        element.getAttribute('aria-disabled') !== 'true' &&
+        !element.closest('[aria-disabled="true"]');
+
+      const findReadySendButton = () => {
+        const selectorButton = findFirstVisible(sendButtonSelectors);
+        return isEnabledButton(selectorButton) ? selectorButton : null;
+      };
+
+      const waitForReadySendButton = async () => {
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          const button = findReadySendButton();
+          if (button) return button;
+          await sleep(100);
+        }
+
+        return null;
+      };
+
+      const dispatchInput = (element) => {
         element.dispatchEvent(new InputEvent('input', {
           bubbles: true,
           cancelable: true,
-          inputType,
-          data: inputType === 'insertText' ? text : null,
+          inputType: 'insertReplacementText',
+          data: null,
         }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
       };
@@ -78,20 +100,6 @@ function createDomSendScript(config: DomSendConfig, text: string): string {
         return false;
       };
 
-      const pressEnter = (element) => {
-        const keyboardOptions = {
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true,
-        };
-        element.dispatchEvent(new KeyboardEvent('keydown', keyboardOptions));
-        element.dispatchEvent(new KeyboardEvent('keypress', keyboardOptions));
-        element.dispatchEvent(new KeyboardEvent('keyup', keyboardOptions));
-      };
-
       try {
         const input = findFirstVisible(inputSelectors);
 
@@ -107,14 +115,13 @@ function createDomSendScript(config: DomSendConfig, text: string): string {
 
         await sleep(80);
 
-        const sendButton = findFirstVisible(sendButtonSelectors);
-        if (sendButton instanceof HTMLElement && !sendButton.hasAttribute('disabled') && sendButton.getAttribute('aria-disabled') !== 'true') {
+        const sendButton = await waitForReadySendButton();
+        if (sendButton instanceof HTMLElement) {
           sendButton.click();
           return { ok: true, message: 'sent' };
         }
 
-        pressEnter(input);
-        return { ok: true, message: 'sent with enter fallback' };
+        return { ok: false, message: 'send button not found', needsNativeEnter: true };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error('[Omni broadcast]', providerLabel, message);
@@ -149,6 +156,17 @@ export async function executeDomSend(
 
   try {
     const result = await webview.executeJavaScript<DomSendResult>(createDomSendScript(config, text), true);
+
+    if (result.needsNativeEnter && typeof webview.sendInputEvent === 'function') {
+      webview.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+      webview.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+
+      return {
+        ok: true,
+        providerId: config.providerId,
+        message: 'sent with native enter fallback',
+      };
+    }
 
     return {
       ok: result.ok,

@@ -1,9 +1,20 @@
 import { executeDomSend } from './domSendScript';
 import type { ProviderAdapter } from './types';
 
-const PERPLEXITY_INPUT_SELECTORS = ['textarea', '[contenteditable="true"]'];
+const PERPLEXITY_INPUT_SELECTORS = [
+  'textarea',
+  '[contenteditable="true"][role="textbox"]',
+  '[contenteditable="true"]',
+];
 
-const PERPLEXITY_SEND_BUTTON_SELECTORS = ['button[aria-label*="Submit"]', 'button[type="submit"]'];
+const PERPLEXITY_SEND_BUTTON_SELECTORS = [
+  'button[aria-label*="Submit"]',
+  'button[aria-label*="Ask"]',
+  'button[aria-label*="Send"]',
+  'button[type="submit"]',
+  '[data-testid*="submit"]',
+  '[data-testid*="send"]',
+];
 
 export const perplexityAdapter: ProviderAdapter = {
   providerId: 'perplexity',

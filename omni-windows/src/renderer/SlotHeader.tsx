@@ -6,14 +6,14 @@ type SlotHeaderProps = {
   providerId: ProviderId;
   label: string;
   compact?: boolean;
-  canDock: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
   onBack: () => void;
   onForward: () => void;
   onReload: () => void;
   onHome: () => void;
-  onDock: () => void;
+  isMaximized: boolean;
+  onToggleMaximize: () => void;
   onClose: () => void;
   onPointerDown?: PointerEventHandler<HTMLDivElement>;
   onClickCapture?: MouseEventHandler<HTMLDivElement>;
@@ -38,18 +38,48 @@ function HomeIcon() {
   );
 }
 
+function MaximizeIcon() {
+  return (
+    <svg className="slot-button-icon" viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M7.5 4.5h-3v3" />
+      <path d="M4.5 4.5 8 8" />
+      <path d="M12.5 4.5h3v3" />
+      <path d="M15.5 4.5 12 8" />
+      <path d="M7.5 15.5h-3v-3" />
+      <path d="M4.5 15.5 8 12" />
+      <path d="M12.5 15.5h3v-3" />
+      <path d="M15.5 15.5 12 12" />
+    </svg>
+  );
+}
+
+function MinimizeIcon() {
+  return (
+    <svg className="slot-button-icon" viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M8 4.5v3H5" />
+      <path d="M8 7.5 4.5 4" />
+      <path d="M12 4.5v3h3" />
+      <path d="M12 7.5 15.5 4" />
+      <path d="M8 15.5v-3H5" />
+      <path d="M8 12.5 4.5 16" />
+      <path d="M12 15.5v-3h3" />
+      <path d="M12 12.5 15.5 16" />
+    </svg>
+  );
+}
+
 export function SlotHeader({
   providerId,
   label,
   compact = false,
-  canDock,
   canGoBack,
   canGoForward,
   onBack,
   onForward,
   onReload,
   onHome,
-  onDock,
+  isMaximized,
+  onToggleMaximize,
   onClose,
   onPointerDown,
   onClickCapture,
@@ -87,12 +117,11 @@ export function SlotHeader({
         <button
           className="slot-icon-button"
           type="button"
-          title={canDock ? 'Send to dock' : 'Keep at least one chat open'}
-          aria-label={canDock ? `${label} send to dock` : `${label} cannot send last chat to dock`}
-          disabled={!canDock}
-          onClick={onDock}
+          title={isMaximized ? '좁게 보기' : '넓게 보기'}
+          aria-label={isMaximized ? `${label} 좁게 보기` : `${label} 넓게 보기`}
+          onClick={onToggleMaximize}
         >
-          v
+          {isMaximized ? <MinimizeIcon /> : <MaximizeIcon />}
         </button>
         <button className="slot-icon-button danger" type="button" title="Close" aria-label={`${label} close`} onClick={onClose}>
           x

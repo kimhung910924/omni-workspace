@@ -9,6 +9,7 @@ export type ProviderWebview = HTMLElement & {
   goForward?: () => void;
   isLoading?: () => boolean;
   reload?: () => void;
+  sendInputEvent?: (event: { type: 'keyDown' | 'keyUp'; keyCode: string }) => void;
 };
 
 export type SendResult = {

@@ -478,6 +478,27 @@ button { font: inherit; }
     opacity 160ms ease;
 }
 
+.provider-pane.maximized {
+  position: fixed;
+  top: 52px;
+  right: 0;
+  bottom: 0;
+  left: 240px;
+  z-index: 30;
+  border-radius: 0;
+  border-color: #c7d2e2;
+  box-shadow: 0 28px 70px rgba(16, 24, 40, 0.28);
+  transform: none;
+}
+
+.sidebar-collapsed .provider-pane.maximized {
+  left: 68px;
+}
+
+.provider-pane.maximized .slot-header {
+  cursor: default;
+}
+
 .slot-header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

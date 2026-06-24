@@ -21,8 +21,10 @@ export const claudeAdapter: ProviderAdapter = {
         sendButtonSelectors: [
           'button[aria-label*="Send"]',
           'button[aria-label*="send"]',
+          'button[aria-label*="Submit"]',
           'button[type="submit"]',
           '[data-testid*="send"]',
+          '[data-testid*="Send"]',
         ],
       },
       text,

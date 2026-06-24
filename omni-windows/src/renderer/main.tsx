@@ -244,6 +244,7 @@ function App() {
   const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<string, BroadcastStatus>>(() =>
     createInitialBroadcastStatuses(slots),
   );
+  const [maximizedSlotId, setMaximizedSlotId] = React.useState<string | null>(null);
   const webviewRefs = React.useRef<Partial<Record<string, ProviderWebview>>>({});
   const webviewReadyRef = React.useRef<Partial<Record<string, boolean>>>({});
   const webviewRefCallbacks = React.useRef<Partial<Record<string, (webview: TrackedProviderWebview | null) => void>>>({});
@@ -297,6 +298,22 @@ function App() {
     }));
     setActiveSlotId(nextStageSlotId);
   }, [dockIds, stageIds.length]);
+
+  React.useEffect(() => {
+    if (!maximizedSlotId || stageIds.includes(maximizedSlotId)) {
+      return;
+    }
+
+    setMaximizedSlotId(null);
+  }, [maximizedSlotId, stageIds]);
+
+  React.useEffect(() => {
+    if (!memoPanelOpen && sidebarView === null) {
+      return;
+    }
+
+    setMaximizedSlotId(null);
+  }, [memoPanelOpen, sidebarView]);
 
   React.useEffect(() => {
     let isMounted = true;
@@ -411,12 +428,6 @@ function App() {
 
           if (navigatedUrl) {
             saveProviderUrl(providerId, navigatedUrl);
-            setGroup((currentGroup) => ({
-              ...currentGroup,
-              slots: currentGroup.slots.map((currentSlot) =>
-                currentSlot.id === slotId ? { ...currentSlot, currentUrl: navigatedUrl } : currentSlot,
-              ),
-            }));
           }
 
           updateSlotNavigationState(slotId);
@@ -676,6 +687,7 @@ function App() {
 
   const getDockDropPositionFromPoint = React.useCallback((clientX: number, clientY: number): DropPosition | null => {
     const dock = document.querySelector<HTMLElement>('.dock');
+    const dockMagnetMargin = 140;
 
     if (!dock) {
       return null;
@@ -683,7 +695,12 @@ function App() {
 
     const dockRect = dock.getBoundingClientRect();
 
-    if (clientX < dockRect.left || clientX > dockRect.right || clientY < dockRect.top || clientY > dockRect.bottom) {
+    if (
+      clientX < dockRect.left ||
+      clientX > dockRect.right ||
+      clientY < dockRect.top - dockMagnetMargin ||
+      clientY > dockRect.bottom
+    ) {
       return null;
     }
 
@@ -1059,6 +1076,7 @@ function App() {
   );
 
   const moveSlotToStage = React.useCallback((slotId: string) => {
+    setMaximizedSlotId(null);
     setSidebarView(null);
     setMemoPanelOpen(false);
     setActiveSlotId(slotId);
@@ -1071,6 +1089,7 @@ function App() {
   }, [moveSlotToPosition, stageIds]);
 
   const handleWorkspaceSelect = React.useCallback((slotId: string) => {
+    setMaximizedSlotId(null);
     setSidebarView(null);
 
     if (dockIds.includes(slotId)) {
@@ -1088,32 +1107,18 @@ function App() {
   }, []);
 
   const handleSidebarViewSelect = React.useCallback((view: Exclude<SidebarView, null>) => {
+    setMaximizedSlotId(null);
     setSidebarView(view);
     setMemoPanelOpen(false);
     setSettingsMenuOpen(false);
   }, []);
 
   const handleMemoPanelSelect = React.useCallback(() => {
+    setMaximizedSlotId(null);
     setSidebarView(null);
     setMemoPanelOpen(true);
     setSettingsMenuOpen(false);
   }, []);
-
-  const moveSlotToDock = React.useCallback((slotId: string) => {
-    if (stageIds.length <= 1) {
-      return;
-    }
-
-    moveSlotToPosition(slotId, 'dock', null, null);
-    setActiveSlotId((currentActiveSlotId) => {
-      if (currentActiveSlotId !== slotId) {
-        return currentActiveSlotId;
-      }
-
-      const nextStageSlotId = stageIds.find((currentSlotId) => currentSlotId !== slotId);
-      return nextStageSlotId ?? dockIds[0] ?? currentActiveSlotId;
-    });
-  }, [dockIds, moveSlotToPosition, stageIds]);
 
   const closeSlot = React.useCallback((slotId: string) => {
     delete webviewRefs.current[slotId];
@@ -1132,6 +1137,7 @@ function App() {
       return nextStatuses;
     });
     clearSlotNavigationState(slotId);
+    setMaximizedSlotId((currentMaximizedSlotId) => (currentMaximizedSlotId === slotId ? null : currentMaximizedSlotId));
     setActiveSlotId((currentActiveSlotId) => {
       if (currentActiveSlotId !== slotId) {
         return currentActiveSlotId;
@@ -1496,7 +1502,7 @@ function App() {
               type="button"
               role="tab"
               aria-selected={memoPanelOpen}
-              onClick={() => setMemoPanelOpen(true)}
+              onClick={handleMemoPanelSelect}
             >
               Memos
             </button>
@@ -1558,6 +1564,7 @@ function App() {
                   const provider = getProviderConfig(slot.providerId);
                   const stageIndex = stageIds.indexOf(slot.id);
                   const isInStage = stageIndex >= 0;
+                  const isMaximized = maximizedSlotId === slot.id;
                   const navigationState = navigationStates[slot.id] ?? {
                     canGoBack: false,
                     canGoForward: false,
@@ -1567,7 +1574,7 @@ function App() {
                   return (
                     <div
                       key={slot.id}
-                      className={`provider-pane expanded ${draggingSlotId === slot.id ? 'dragging' : ''}`}
+                      className={`provider-pane expanded ${draggingSlotId === slot.id ? 'dragging' : ''} ${isMaximized ? 'maximized' : ''}`}
                       data-slot-id={slot.id}
                       onDragOver={(event) => handleSlotDragOver('stage', slot.id, event)}
                       onDrop={(event) => handleSlotDrop('stage', slot.id, event)}
@@ -1577,11 +1584,10 @@ function App() {
                         providerId={slot.providerId}
                         label={provider.label}
                         compact={stageIds.length === MAX_STAGE_SLOTS && !isStageGrid}
-                        canDock={stageIds.length > 1}
                         canGoBack={navigationState.canGoBack}
                         canGoForward={navigationState.canGoForward}
                         onPointerDown={(event) => {
-                          if (isInStage) {
+                          if (isInStage && !isMaximized) {
                             handleStageHeaderPointerDown(slot.id, event);
                           }
                         }}
@@ -1590,7 +1596,13 @@ function App() {
                         onForward={() => goSlotForward(slot.id)}
                         onReload={() => reloadSlot(slot.id)}
                         onHome={() => startSlotNewChat(slot)}
-                        onDock={() => moveSlotToDock(slot.id)}
+                        isMaximized={isMaximized}
+                        onToggleMaximize={() => {
+                          setSidebarView(null);
+                          setMemoPanelOpen(false);
+                          setActiveSlotId(slot.id);
+                          setMaximizedSlotId((currentMaximizedSlotId) => (currentMaximizedSlotId === slot.id ? null : slot.id));
+                        }}
                         onClose={() => closeSlot(slot.id)}
                       />
                       <webview
