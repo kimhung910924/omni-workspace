@@ -1277,15 +1277,16 @@ function App() {
     <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <aside className="sidebar" aria-label="Workspace sidebar">
         <div className="sidebar-header">
+          <div className="brand">OMNI</div>
           <button
             className="sidebar-toggle"
             type="button"
             aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'}
             onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
           >
-            {sidebarCollapsed ? '>' : '<'}
+            <span className="sidebar-toggle-icon" aria-hidden="true" />
           </button>
-          <div className="brand">Omni</div>
         </div>
         <nav className="workspace-list" aria-label="Global navigation">
           <button
