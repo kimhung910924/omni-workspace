@@ -124,6 +124,17 @@ function createInitialSlot(providerId: ProviderId): Slot {
   };
 }
 
+function createNewSlot(providerId: ProviderId): Slot {
+  const provider = getProviderConfig(providerId);
+
+  return {
+    id: createId(),
+    providerId,
+    currentUrl: provider.defaultUrl,
+    title: provider.label,
+  };
+}
+
 function createInitialGroup(): Group {
   const slots = PROVIDERS.map((provider) => createInitialSlot(provider.id));
 
@@ -203,6 +214,7 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [sidebarView, setSidebarView] = React.useState<SidebarView>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = React.useState(false);
+  const [addSlotModalOpen, setAddSlotModalOpen] = React.useState(false);
   const [memoPanelOpen, setMemoPanelOpen] = React.useState(false);
   const [memoSearch, setMemoSearch] = React.useState('');
   const [manualMemoText, setManualMemoText] = React.useState('');
@@ -1090,9 +1102,36 @@ function App() {
   }, [clearSlotNavigationState, slots]);
 
   const handleAddSlot = React.useCallback(() => {
-    // TODO: Open model selection modal and create a new slot.
-    console.log('[Omni slots] add slot placeholder');
+    setAddSlotModalOpen(true);
   }, []);
+
+  const handleConfirmAddSlot = React.useCallback((providerId: ProviderId) => {
+    if (group.slots.length >= MAX_SLOTS) {
+      return;
+    }
+
+    const newSlot = createNewSlot(providerId);
+
+    setGroup((currentGroup) => {
+      const goesToStage = currentGroup.stageIds.length < MAX_STAGE_SLOTS;
+
+      return {
+        ...currentGroup,
+        slots: [...currentGroup.slots, newSlot],
+        stageIds: goesToStage ? [...currentGroup.stageIds, newSlot.id] : currentGroup.stageIds,
+        dockIds: goesToStage ? currentGroup.dockIds : [...currentGroup.dockIds, newSlot.id],
+      };
+    });
+    setNavigationStates((current) => ({
+      ...current,
+      [newSlot.id]: { canGoBack: false, canGoForward: false, isDomReady: false },
+    }));
+    setBroadcastStatuses((current) => ({
+      ...current,
+      [newSlot.id]: { state: 'idle', message: 'Ready' },
+    }));
+    setAddSlotModalOpen(false);
+  }, [group.slots.length]);
 
   const handleManualMemoSave = React.useCallback(() => {
     const content = manualMemoText.trim();
@@ -1701,6 +1740,38 @@ function App() {
             </div>
           </div>
         </section>
+
+        {addSlotModalOpen && (
+          <div className="add-slot-modal-backdrop" role="presentation" onMouseDown={() => setAddSlotModalOpen(false)}>
+            <section
+              className="add-slot-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="add-slot-modal-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <header className="add-slot-modal-header">
+                <h2 id="add-slot-modal-title">슬롯 추가</h2>
+                <button className="add-slot-modal-close" type="button" aria-label="닫기" onClick={() => setAddSlotModalOpen(false)}>
+                  ×
+                </button>
+              </header>
+              <div className="add-slot-provider-list">
+                {PROVIDERS.map((provider) => (
+                  <button
+                    key={provider.id}
+                    className="add-slot-provider-button"
+                    type="button"
+                    onClick={() => handleConfirmAddSlot(provider.id)}
+                  >
+                    <ProviderIcon providerId={provider.id} label={provider.label} />
+                    <span>{provider.label}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
 
         {selectedMemo && (
           <div className="memo-modal-backdrop" role="presentation" onMouseDown={closeMemoDetail}>
