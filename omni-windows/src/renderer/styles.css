@@ -163,6 +163,18 @@ button { font: inherit; }
   height: 24px;
 }
 
+.global-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 7px;
+  color: #344054;
+  background: #eef2f6;
+  font-size: 14px;
+  font-weight: 800;
+}
+
 .workspace-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -176,6 +188,52 @@ button { font: inherit; }
 
 .sidebar-collapsed .workspace-label {
   display: none;
+}
+
+.sidebar-account {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  margin-top: auto;
+}
+
+.account-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #cfd8e3;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #344054;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.account-avatar:hover {
+  border-color: #98a2b3;
+  background: #1f2937;
+}
+
+.settings-popover {
+  position: absolute;
+  bottom: 48px;
+  left: 0;
+  min-width: 148px;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #344054;
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.14);
+}
+
+.sidebar-collapsed .settings-popover {
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .main-area {
@@ -259,6 +317,20 @@ button { font: inherit; }
 
 .provider-status.failed {
   color: #b42318;
+}
+
+.sidebar-placeholder-page {
+  grid-row: 2 / 4;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: 28px;
+  color: #475467;
+  background: #f6f7f9;
+  font-size: 18px;
+  font-weight: 800;
 }
 
 .webview-panel {

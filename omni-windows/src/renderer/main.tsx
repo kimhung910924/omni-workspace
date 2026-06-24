@@ -51,6 +51,7 @@ type Slot = {
 };
 
 type LayoutMode = 'row' | 'grid2x2';
+type SidebarView = 'workspace-panel' | 'prompt-library' | null;
 type DropPosition = { targetId: string | null; side: 'before' | 'after' | null };
 type StagePointerDrag = {
   id: string;
@@ -165,6 +166,8 @@ function getSourceHint(memo: Memo): string {
 function App() {
   const [activeSlotId, setActiveSlotId] = React.useState<string>('claude');
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+  const [sidebarView, setSidebarView] = React.useState<SidebarView>(null);
+  const [settingsMenuOpen, setSettingsMenuOpen] = React.useState(false);
   const [memoPanelOpen, setMemoPanelOpen] = React.useState(false);
   const [memoSearch, setMemoSearch] = React.useState('');
   const [manualMemoText, setManualMemoText] = React.useState('');
@@ -967,6 +970,7 @@ function App() {
   );
 
   const moveSlotToStage = React.useCallback((slotId: string) => {
+    setSidebarView(null);
     setMemoPanelOpen(false);
     setActiveSlotId(slotId);
 
@@ -978,6 +982,8 @@ function App() {
   }, [moveSlotToPosition, stageIds]);
 
   const handleWorkspaceSelect = React.useCallback((slotId: string) => {
+    setSidebarView(null);
+
     if (dockIds.includes(slotId)) {
       moveSlotToStage(slotId);
       return;
@@ -986,6 +992,23 @@ function App() {
     setActiveSlotId(slotId);
     setMemoPanelOpen(false);
   }, [dockIds, moveSlotToStage]);
+
+  const handleNewGroupClick = React.useCallback(() => {
+    setSettingsMenuOpen(false);
+    // TODO: Start a blank workspace with the configured default slot group.
+  }, []);
+
+  const handleSidebarViewSelect = React.useCallback((view: Exclude<SidebarView, null>) => {
+    setSidebarView(view);
+    setMemoPanelOpen(false);
+    setSettingsMenuOpen(false);
+  }, []);
+
+  const handleMemoPanelSelect = React.useCallback(() => {
+    setSidebarView(null);
+    setMemoPanelOpen(true);
+    setSettingsMenuOpen(false);
+  }, []);
 
   const moveSlotToDock = React.useCallback((slotId: string) => {
     if (stageIds.length <= 1) {
@@ -1242,6 +1265,14 @@ function App() {
     webviewRefs.current[slot.id]?.loadURL?.(providerAdapters[slot.providerId].newChatUrl);
   }, []);
 
+  const sidebarPlaceholderTitle =
+    sidebarView === 'workspace-panel'
+      ? '워크스페이스 관리 - 준비 중'
+      : sidebarView === 'prompt-library'
+        ? '프롬프트 라이브러리 - 준비 중'
+        : '';
+  const sidebarPlaceholderOpen = sidebarView !== null && !memoPanelOpen;
+
   return (
     <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <aside className="sidebar" aria-label="Workspace sidebar">
@@ -1256,35 +1287,68 @@ function App() {
           </button>
           <div className="brand">Omni</div>
         </div>
-        <nav className="workspace-list" aria-label="Workspaces">
-          {slots.map((slot) => {
-            const provider = getProviderConfig(slot.providerId);
-
-            return (
-            <button
-              key={slot.id}
-              className={`workspace-item ${!memoPanelOpen && slot.id === activeSlotId ? 'active' : ''}`}
-              type="button"
-              title={provider.label}
-              onClick={() => handleWorkspaceSelect(slot.id)}
-            >
-              <ProviderIcon providerId={provider.id} label={provider.label} className="workspace-icon" />
-              <span className="workspace-label">{provider.label}</span>
-            </button>
-            );
-          })}
+        <nav className="workspace-list" aria-label="Global navigation">
+          <button
+            className="workspace-item"
+            type="button"
+            title="새그룹"
+            onClick={handleNewGroupClick}
+          >
+            <span className="workspace-icon global-nav-icon" aria-hidden="true">
+              +
+            </span>
+            <span className="workspace-label">새그룹</span>
+          </button>
+          <button
+            className={`workspace-item ${sidebarView === 'workspace-panel' && !memoPanelOpen ? 'active' : ''}`}
+            type="button"
+            title="워크스페이스"
+            onClick={() => handleSidebarViewSelect('workspace-panel')}
+          >
+            <span className="workspace-icon global-nav-icon" aria-hidden="true">
+              ▤
+            </span>
+            <span className="workspace-label">워크스페이스</span>
+          </button>
+          <button
+            className={`workspace-item ${sidebarView === 'prompt-library' && !memoPanelOpen ? 'active' : ''}`}
+            type="button"
+            title="프롬프트 라이브러리"
+            onClick={() => handleSidebarViewSelect('prompt-library')}
+          >
+            <span className="workspace-icon global-nav-icon" aria-hidden="true">
+              ✎
+            </span>
+            <span className="workspace-label">프롬프트 라이브러리</span>
+          </button>
           <button
             className={`workspace-item ${memoPanelOpen ? 'active' : ''}`}
             type="button"
             title="메모"
-            onClick={() => setMemoPanelOpen(true)}
+            onClick={handleMemoPanelSelect}
           >
-            <span className="workspace-icon" aria-hidden="true">
+            <span className="workspace-icon global-nav-icon" aria-hidden="true">
               M
             </span>
             <span className="workspace-label">메모</span>
           </button>
         </nav>
+        <div className="sidebar-account">
+          {settingsMenuOpen && (
+            <div className="settings-popover" role="status">
+              설정 - 준비 중
+            </div>
+          )}
+          <button
+            className="account-avatar"
+            type="button"
+            aria-label="설정 열기"
+            title="설정"
+            onClick={() => setSettingsMenuOpen((open) => !open)}
+          >
+            Y
+          </button>
+        </div>
       </aside>
 
       <main className="main-area">
@@ -1329,10 +1393,16 @@ function App() {
           </div>
         )}
 
+        {sidebarPlaceholderOpen && (
+          <section className="sidebar-placeholder-page" aria-label={sidebarPlaceholderTitle}>
+            <div>{sidebarPlaceholderTitle}</div>
+          </section>
+        )}
+
         <section
-          className={`webview-panel ${memoPanelOpen ? 'view-hidden' : ''}`}
+          className={`webview-panel ${memoPanelOpen || sidebarPlaceholderOpen ? 'view-hidden' : ''}`}
           aria-label="Claude, ChatGPT, and Gemini webviews"
-          aria-hidden={memoPanelOpen}
+          aria-hidden={memoPanelOpen || sidebarPlaceholderOpen}
           onDragOver={handleStageContainerDragOver}
           onDrop={handleStageContainerDrop}
         >
@@ -1423,7 +1493,7 @@ function App() {
           )}
         </section>
 
-        <div className={`workspace-bottom ${memoPanelOpen ? 'view-hidden' : ''}`}>
+        <div className={`workspace-bottom ${memoPanelOpen || sidebarPlaceholderOpen ? 'view-hidden' : ''}`}>
           <div className="dock-row">
             {broadcastCollapsed && (
               <button
