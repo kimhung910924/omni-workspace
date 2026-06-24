@@ -52,6 +52,14 @@ type Slot = {
 
 type LayoutMode = 'row' | 'grid2x2';
 type SidebarView = 'workspace-panel' | 'prompt-library' | null;
+type Group = {
+  id: string;
+  slots: Slot[];
+  stageIds: string[];
+  dockIds: string[];
+  layoutMode: LayoutMode;
+  dockMinimized: boolean;
+};
 type DropPosition = { targetId: string | null; side: 'before' | 'after' | null };
 type StagePointerDrag = {
   id: string;
@@ -101,15 +109,40 @@ function getProviderConfig(providerId: ProviderId) {
   return PROVIDERS.find((provider) => provider.id === providerId) ?? PROVIDERS[0];
 }
 
+function createId(): string {
+  return crypto.randomUUID();
+}
+
 function createInitialSlot(providerId: ProviderId): Slot {
   const provider = getProviderConfig(providerId);
 
   return {
-    id: providerId,
+    id: createId(),
     providerId,
     currentUrl: getInitialProviderUrl({ id: provider.id, defaultUrl: provider.defaultUrl }),
     title: provider.label,
   };
+}
+
+function createInitialGroup(): Group {
+  const slots = PROVIDERS.map((provider) => createInitialSlot(provider.id));
+
+  return {
+    id: createId(),
+    slots,
+    stageIds: slots.map((slot) => slot.id),
+    dockIds: [],
+    layoutMode: 'row',
+    dockMinimized: false,
+  };
+}
+
+function createInitialNavigationStates(slots: Slot[]): Partial<Record<string, NavigationState>> {
+  return Object.fromEntries(slots.map((slot) => [slot.id, { canGoBack: false, canGoForward: false, isDomReady: false }]));
+}
+
+function createInitialBroadcastStatuses(slots: Slot[]): Record<string, BroadcastStatus> {
+  return Object.fromEntries(slots.map((slot) => [slot.id, { state: 'idle', message: 'Ready' }]));
 }
 
 const LOAD_FAILURE_MESSAGE = '삭제되었거나 접근할 수 없는 대화방입니다. 메모는 그대로 보관됩니다.';
@@ -164,7 +197,9 @@ function getSourceHint(memo: Memo): string {
 }
 
 function App() {
-  const [activeSlotId, setActiveSlotId] = React.useState<string>('claude');
+  const [group, setGroup] = React.useState<Group>(() => createInitialGroup());
+  const { slots, stageIds, dockIds, layoutMode, dockMinimized } = group;
+  const [activeSlotId, setActiveSlotId] = React.useState<string>(() => stageIds[0] ?? slots[0]?.id ?? '');
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [sidebarView, setSidebarView] = React.useState<SidebarView>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = React.useState(false);
@@ -178,23 +213,14 @@ function App() {
   const [navigationNotice, setNavigationNotice] = React.useState('');
   const [memos, setMemos] = React.useState<Memo[]>(() => loadMemos());
   const [webviewCapturePreloadUrl, setWebviewCapturePreloadUrl] = React.useState<string | null>(null);
-  const [slots, setSlots] = React.useState<Slot[]>(() => PROVIDERS.map((provider) => createInitialSlot(provider.id)));
-  const [stageIds, setStageIds] = React.useState<string[]>(() => PROVIDERS.map((provider) => provider.id));
-  const [dockIds, setDockIds] = React.useState<string[]>([]);
-  const [layoutMode, setLayoutMode] = React.useState<LayoutMode>('row');
-  const [dockMinimized, setDockMinimized] = React.useState(false);
-  const [navigationStates, setNavigationStates] = React.useState<Partial<Record<string, NavigationState>>>({
-    claude: { canGoBack: false, canGoForward: false, isDomReady: false },
-    chatgpt: { canGoBack: false, canGoForward: false, isDomReady: false },
-    gemini: { canGoBack: false, canGoForward: false, isDomReady: false },
-  });
+  const [navigationStates, setNavigationStates] = React.useState<Partial<Record<string, NavigationState>>>(() =>
+    createInitialNavigationStates(slots),
+  );
   const [broadcastCollapsed, setBroadcastCollapsed] = React.useState(false);
   const [broadcastText, setBroadcastText] = React.useState('');
-  const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<string, BroadcastStatus>>({
-    claude: { state: 'idle', message: 'Ready' },
-    chatgpt: { state: 'idle', message: 'Ready' },
-    gemini: { state: 'idle', message: 'Ready' },
-  });
+  const [broadcastStatuses, setBroadcastStatuses] = React.useState<Record<string, BroadcastStatus>>(() =>
+    createInitialBroadcastStatuses(slots),
+  );
   const webviewRefs = React.useRef<Partial<Record<string, ProviderWebview>>>({});
   const webviewReadyRef = React.useRef<Partial<Record<string, boolean>>>({});
   const webviewRefCallbacks = React.useRef<Partial<Record<string, (webview: TrackedProviderWebview | null) => void>>>({});
@@ -241,8 +267,11 @@ function App() {
     }
 
     const [nextStageSlotId, ...remainingDockIds] = dockIds;
-    setStageIds([nextStageSlotId]);
-    setDockIds(remainingDockIds);
+    setGroup((currentGroup) => ({
+      ...currentGroup,
+      stageIds: [nextStageSlotId],
+      dockIds: remainingDockIds,
+    }));
     setActiveSlotId(nextStageSlotId);
   }, [dockIds, stageIds.length]);
 
@@ -359,9 +388,12 @@ function App() {
 
           if (navigatedUrl) {
             saveProviderUrl(providerId, navigatedUrl);
-            setSlots((currentSlots) =>
-              currentSlots.map((currentSlot) => (currentSlot.id === slotId ? { ...currentSlot, currentUrl: navigatedUrl } : currentSlot)),
-            );
+            setGroup((currentGroup) => ({
+              ...currentGroup,
+              slots: currentGroup.slots.map((currentSlot) =>
+                currentSlot.id === slotId ? { ...currentSlot, currentUrl: navigatedUrl } : currentSlot,
+              ),
+            }));
           }
 
           updateSlotNavigationState(slotId);
@@ -372,9 +404,10 @@ function App() {
         webview.addEventListener('did-finish-load', () => updateSlotNavigationState(slotId));
         webview.addEventListener('page-title-updated', (event: Event & { title?: string }) => {
           const title = typeof event.title === 'string' && event.title.trim() ? event.title.trim() : getProviderConfig(providerId).label;
-          setSlots((currentSlots) =>
-            currentSlots.map((currentSlot) => (currentSlot.id === slotId ? { ...currentSlot, title } : currentSlot)),
-          );
+          setGroup((currentGroup) => ({
+            ...currentGroup,
+            slots: currentGroup.slots.map((currentSlot) => (currentSlot.id === slotId ? { ...currentSlot, title } : currentSlot)),
+          }));
         });
         webview.addEventListener('did-fail-load', (event: WebviewNavigationEvent) => {
           if (event.isMainFrame === false || event.errorCode === -3) {
@@ -540,8 +573,11 @@ function App() {
 
       stageIdsRef.current = nextStageIds;
       dockIdsRef.current = nextDockIds;
-      setStageIds(nextStageIds);
-      setDockIds(nextDockIds);
+      setGroup((currentGroup) => ({
+        ...currentGroup,
+        stageIds: nextStageIds,
+        dockIds: nextDockIds,
+      }));
 
       if (destArrName === 'stage') {
         activeSlotIdRef.current = id;
@@ -1031,9 +1067,12 @@ function App() {
     delete webviewReadyRef.current[slotId];
     delete webviewRefCallbacks.current[slotId];
 
-    setSlots((currentSlots) => currentSlots.filter((slot) => slot.id !== slotId));
-    setStageIds((currentStageIds) => currentStageIds.filter((currentSlotId) => currentSlotId !== slotId));
-    setDockIds((currentDockIds) => currentDockIds.filter((currentSlotId) => currentSlotId !== slotId));
+    setGroup((currentGroup) => ({
+      ...currentGroup,
+      slots: currentGroup.slots.filter((slot) => slot.id !== slotId),
+      stageIds: currentGroup.stageIds.filter((currentSlotId) => currentSlotId !== slotId),
+      dockIds: currentGroup.dockIds.filter((currentSlotId) => currentSlotId !== slotId),
+    }));
     setBroadcastStatuses((currentStatuses) => {
       const nextStatuses = { ...currentStatuses };
       delete nextStatuses[slotId];
@@ -1417,7 +1456,12 @@ function App() {
                     type="button"
                     title={layoutMode === 'row' ? 'Switch to 2x2 grid' : 'Switch to row'}
                     aria-label={layoutMode === 'row' ? 'Switch to 2x2 grid' : 'Switch to row'}
-                    onClick={() => setLayoutMode((currentMode) => (currentMode === 'row' ? 'grid2x2' : 'row'))}
+                    onClick={() =>
+                      setGroup((currentGroup) => ({
+                        ...currentGroup,
+                        layoutMode: currentGroup.layoutMode === 'row' ? 'grid2x2' : 'row',
+                      }))
+                    }
                   >
                     {layoutMode === 'row' ? '▦' : '▤'}
                   </button>
@@ -1519,7 +1563,12 @@ function App() {
                   type="button"
                   title={dockMinimized ? 'Expand dock' : 'Minimize dock'}
                   aria-label={dockMinimized ? 'Expand dock' : 'Minimize dock'}
-                  onClick={() => setDockMinimized((minimized) => !minimized)}
+                  onClick={() =>
+                    setGroup((currentGroup) => ({
+                      ...currentGroup,
+                      dockMinimized: !currentGroup.dockMinimized,
+                    }))
+                  }
                 >
                   {dockMinimized ? '^' : 'v'}
                 </button>
