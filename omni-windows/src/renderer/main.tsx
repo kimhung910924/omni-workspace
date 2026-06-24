@@ -7,7 +7,9 @@ import { SlotHeader } from './SlotHeader';
 import { providerAdapters, type ProviderWebview, type SendResult } from './providerAdapters';
 import { getInitialProviderUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
 import { createMemo, loadMemos, saveMemos } from './features/memos/memoStore';
+import { loadGroup, saveGroup, type Group } from './groupStore';
 import type { Memo } from './features/memos/types';
+import type { Slot } from './types';
 
 type WebviewNavigationEvent = Event & {
   url?: string;
@@ -43,23 +45,7 @@ type NavigationState = {
   isDomReady: boolean;
 };
 
-type Slot = {
-  id: string;
-  providerId: ProviderId;
-  currentUrl: string;
-  title: string;
-};
-
-type LayoutMode = 'row' | 'grid2x2';
 type SidebarView = 'workspace-panel' | 'prompt-library' | null;
-type Group = {
-  id: string;
-  slots: Slot[];
-  stageIds: string[];
-  dockIds: string[];
-  layoutMode: LayoutMode;
-  dockMinimized: boolean;
-};
 type DropPosition = { targetId: string | null; side: 'before' | 'after' | null };
 type StagePointerDrag = {
   id: string;
@@ -219,7 +205,7 @@ function getSourceHint(memo: Memo): string {
 }
 
 function App() {
-  const [group, setGroup] = React.useState<Group>(() => createInitialGroup());
+  const [group, setGroup] = React.useState<Group>(() => loadGroup() ?? createInitialGroup());
   const { slots, stageIds, dockIds, layoutMode, dockMinimized } = group;
   const [activeSlotId, setActiveSlotId] = React.useState<string>(() => stageIds[0] ?? slots[0]?.id ?? '');
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
@@ -274,6 +260,10 @@ function App() {
   React.useEffect(() => {
     saveMemos(memos);
   }, [memos]);
+
+  React.useEffect(() => {
+    saveGroup(group);
+  }, [group]);
 
   React.useEffect(() => {
     stageIdsRef.current = stageIds;
@@ -434,6 +424,18 @@ function App() {
 
           if (navigatedUrl) {
             saveProviderUrl(providerId, navigatedUrl);
+            setGroup((currentGroup) => {
+              const currentSlot = currentGroup.slots.find((slot) => slot.id === slotId);
+
+              if (currentSlot?.currentUrl === navigatedUrl) {
+                return currentGroup;
+              }
+
+              return {
+                ...currentGroup,
+                slots: currentGroup.slots.map((slot) => (slot.id === slotId ? { ...slot, currentUrl: navigatedUrl } : slot)),
+              };
+            });
           }
 
           updateSlotNavigationState(slotId);
