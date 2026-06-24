@@ -43,7 +43,8 @@ button { font: inherit; }
 .stage-layout-toggle,
 .dock-toggle,
 .dock-add-button,
-.broadcast-toggle {
+.broadcast-toggle,
+.page-back-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -61,7 +62,8 @@ button { font: inherit; }
 .stage-layout-toggle:hover,
 .dock-toggle:hover,
 .dock-add-button:hover,
-.broadcast-toggle:hover {
+.broadcast-toggle:hover,
+.page-back-button:hover {
   border-color: #aeb8c6;
   background: #f2f4f7;
 }
@@ -369,7 +371,7 @@ button { font: inherit; }
 .sidebar-placeholder-page {
   grid-row: 2 / 4;
   display: grid;
-  place-items: center;
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -378,6 +380,19 @@ button { font: inherit; }
   background: #f6f7f9;
   font-size: 18px;
   font-weight: 800;
+}
+
+.sidebar-placeholder-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sidebar-placeholder-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .webview-panel {
@@ -913,6 +928,13 @@ body.stage-pointer-dragging .provider-webview {
   gap: 18px;
   align-items: end;
   justify-content: space-between;
+}
+
+.memos-page-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
 }
 
 .memos-page-header h1,

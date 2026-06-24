@@ -1179,6 +1179,12 @@ function App() {
     setSettingsMenuOpen(false);
   }, []);
 
+  const handleReturnToStage = React.useCallback(() => {
+    setSidebarView(null);
+    setMemoPanelOpen(false);
+    setSettingsMenuOpen(false);
+  }, []);
+
   const closeSlot = React.useCallback((slotId: string) => {
     delete webviewRefs.current[slotId];
     delete webviewReadyRef.current[slotId];
@@ -1580,7 +1586,12 @@ function App() {
 
         {sidebarPlaceholderOpen && (
           <section className="sidebar-placeholder-page" aria-label={sidebarPlaceholderTitle}>
-            <div>{sidebarPlaceholderTitle}</div>
+            <div className="sidebar-placeholder-inner">
+              <button className="page-back-button" type="button" aria-label="Stage로 돌아가기" title="Stage로 돌아가기" onClick={handleReturnToStage}>
+                ←
+              </button>
+              <div className="sidebar-placeholder-title">{sidebarPlaceholderTitle}</div>
+            </div>
           </section>
         )}
 
@@ -1804,9 +1815,14 @@ function App() {
         <section className={`memos-page ${memoPanelOpen ? '' : 'view-hidden'}`} aria-label="Memos">
           <div className="memos-page-inner">
             <div className="memos-page-header">
-              <div>
-                <h1>Memos</h1>
+              <div className="memos-page-title-row">
+                <button className="page-back-button" type="button" aria-label="Stage로 돌아가기" title="Stage로 돌아가기" onClick={handleReturnToStage}>
+                  ←
+                </button>
+                <div>
+                  <h1>Memos</h1>
                 <p>채팅에서 저장한 메모와 직접 작성한 메모를 한곳에서 관리합니다.</p>
+                </div>
               </div>
               <input
                 className="memo-search"
