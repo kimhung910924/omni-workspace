@@ -1,3 +1,4 @@
+import type { MouseEventHandler, PointerEventHandler } from 'react';
 import type { ProviderId } from './providerUrlStore';
 import { ProviderIcon } from './ProviderIcon';
 
@@ -13,6 +14,8 @@ type SlotHeaderProps = {
   onHome: () => void;
   onDock: () => void;
   onClose: () => void;
+  onPointerDown?: PointerEventHandler<HTMLDivElement>;
+  onClickCapture?: MouseEventHandler<HTMLDivElement>;
 };
 
 export function SlotHeader({
@@ -27,9 +30,11 @@ export function SlotHeader({
   onHome,
   onDock,
   onClose,
+  onPointerDown,
+  onClickCapture,
 }: SlotHeaderProps) {
   return (
-    <div className="slot-header">
+    <div className="slot-header" onPointerDown={onPointerDown} onClickCapture={onClickCapture}>
       <div className="slot-header-group slot-header-nav" aria-label={`${label} navigation`}>
         <button className="slot-icon-button" type="button" title="Back" aria-label={`${label} back`} disabled={!canGoBack} onClick={onBack}>
           {'<'}

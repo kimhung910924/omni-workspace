@@ -298,6 +298,7 @@ button { font: inherit; }
 
 .stage-grid {
   display: grid;
+  position: relative;
   gap: 12px;
   min-width: 0;
   min-height: 0;
@@ -318,6 +319,13 @@ button { font: inherit; }
   font-size: 13px;
 }
 
+.stage-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: transparent;
+}
+
 .view-hidden {
   display: none !important;
 }
@@ -331,6 +339,24 @@ button { font: inherit; }
   border: 1px solid #d5dbe5;
   border-radius: 8px;
   background: #ffffff;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease;
+  will-change: transform;
+}
+
+.provider-pane.dragging {
+  z-index: 9;
+  border-color: #9db4d4;
+  box-shadow: 0 22px 42px rgba(16, 24, 40, 0.24);
+  opacity: 0.96;
+  transform: translate(var(--drag-x, 0), calc(var(--drag-y, 0) - 10px)) scale(1.015);
+  transition:
+    box-shadow 160ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease;
 }
 
 .slot-header {
@@ -342,6 +368,21 @@ button { font: inherit; }
   padding: 5px 6px;
   border-bottom: 1px solid #d9dee7;
   background: #ffffff;
+  cursor: grab;
+}
+
+.provider-pane.dragging .slot-header {
+  cursor: grabbing;
+}
+
+body.stage-pointer-dragging,
+body.stage-pointer-dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+body.stage-pointer-dragging .provider-webview {
+  pointer-events: none;
 }
 
 .slot-header-group {
@@ -520,11 +561,27 @@ button { font: inherit; }
   cursor: pointer;
   text-align: left;
   user-select: none;
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease,
+    opacity 150ms ease;
+  will-change: transform;
 }
 
 .dock-chip:hover {
   border-color: #aeb8c6;
   background: #eef1f5;
+}
+
+.dock-chip.dragging {
+  z-index: 3;
+  border-color: #9db4d4;
+  box-shadow: 0 10px 22px rgba(16, 24, 40, 0.16);
+  opacity: 0.9;
+  transform: translateY(-3px) scale(1.02);
+  cursor: grabbing;
 }
 
 .dock-chip-text {

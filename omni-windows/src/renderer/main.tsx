@@ -1,4 +1,5 @@
 import React from 'react';
+import { flushSync } from 'react-dom';
 import ReactDOM from 'react-dom/client';
 import './styles.css';
 import { ProviderIcon } from './ProviderIcon';
@@ -50,6 +51,15 @@ type Slot = {
 };
 
 type LayoutMode = 'row' | 'grid2x2';
+type DropPosition = { targetId: string | null; side: 'before' | 'after' | null };
+type StagePointerDrag = {
+  id: string;
+  startX: number;
+  startY: number;
+  grabOffsetX: number;
+  grabOffsetY: number;
+  active: boolean;
+};
 
 const MAX_SLOTS = 8;
 const MAX_STAGE_SLOTS = 4;
@@ -186,6 +196,13 @@ function App() {
   const webviewReadyRef = React.useRef<Partial<Record<string, boolean>>>({});
   const webviewRefCallbacks = React.useRef<Partial<Record<string, (webview: TrackedProviderWebview | null) => void>>>({});
   const draggedIdRef = React.useRef<string | null>(null);
+  const lastDragPreviewRef = React.useRef<string | null>(null);
+  const stagePointerDragRef = React.useRef<StagePointerDrag | null>(null);
+  const suppressNextHeaderClickRef = React.useRef(false);
+  const stageIdsRef = React.useRef(stageIds);
+  const dockIdsRef = React.useRef(dockIds);
+  const activeSlotIdRef = React.useRef(activeSlotId);
+  const [draggingSlotId, setDraggingSlotId] = React.useState<string | null>(null);
   const slotsById = React.useMemo(() => new Map(slots.map((slot) => [slot.id, slot])), [slots]);
   const stageSlots = React.useMemo(() => stageIds.map((slotId) => slotsById.get(slotId)).filter(Boolean) as Slot[], [slotsById, stageIds]);
   const dockSlots = React.useMemo(() => dockIds.map((slotId) => slotsById.get(slotId)).filter(Boolean) as Slot[], [dockIds, slotsById]);
@@ -202,6 +219,18 @@ function App() {
   React.useEffect(() => {
     saveMemos(memos);
   }, [memos]);
+
+  React.useEffect(() => {
+    stageIdsRef.current = stageIds;
+  }, [stageIds]);
+
+  React.useEffect(() => {
+    dockIdsRef.current = dockIds;
+  }, [dockIds]);
+
+  React.useEffect(() => {
+    activeSlotIdRef.current = activeSlotId;
+  }, [activeSlotId]);
 
   React.useEffect(() => {
     if (stageIds.length > 0 || dockIds.length === 0) {
@@ -478,8 +507,11 @@ function App() {
         return;
       }
 
-      const stageWithoutDragged = stageIds.filter((slotId) => slotId !== id);
-      const dockWithoutDragged = dockIds.filter((slotId) => slotId !== id);
+      const currentStageIds = stageIdsRef.current;
+      const currentDockIds = dockIdsRef.current;
+      const currentActiveSlotId = activeSlotIdRef.current;
+      const stageWithoutDragged = currentStageIds.filter((slotId) => slotId !== id);
+      const dockWithoutDragged = currentDockIds.filter((slotId) => slotId !== id);
       const destArr = destArrName === 'stage' ? [...stageWithoutDragged] : [...dockWithoutDragged];
       const targetIndex = targetId ? destArr.indexOf(targetId) : -1;
       const insertIdx = targetIndex >= 0 ? targetIndex + (side === 'after' ? 1 : 0) : destArr.length;
@@ -503,17 +535,22 @@ function App() {
         }
       }
 
+      stageIdsRef.current = nextStageIds;
+      dockIdsRef.current = nextDockIds;
       setStageIds(nextStageIds);
       setDockIds(nextDockIds);
 
       if (destArrName === 'stage') {
+        activeSlotIdRef.current = id;
         setActiveSlotId(id);
         setMemoPanelOpen(false);
-      } else if (activeSlotId === id) {
-        setActiveSlotId(nextStageIds[0] ?? nextDockIds[0] ?? id);
+      } else if (currentActiveSlotId === id) {
+        const nextActiveSlotId = nextStageIds[0] ?? nextDockIds[0] ?? id;
+        activeSlotIdRef.current = nextActiveSlotId;
+        setActiveSlotId(nextActiveSlotId);
       }
     },
-    [activeSlotId, dockIds, slotsById, stageIds],
+    [slotsById],
   );
 
   const getDropSide = React.useCallback((event: React.DragEvent<HTMLElement>): 'before' | 'after' => {
@@ -521,21 +558,314 @@ function App() {
     return event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
   }, []);
 
+  const getStageDropPositionFromClientX = React.useCallback((clientX: number): DropPosition => {
+    const stageRoot = document.querySelector<HTMLElement>('.webview-panel');
+    const draggedId = draggedIdRef.current;
+    const panes = stageIdsRef.current
+      .filter((slotId) => slotId !== draggedId)
+      .map((slotId) => stageRoot?.querySelector<HTMLElement>(`[data-slot-id="${slotId}"]`) ?? null)
+      .filter((pane): pane is HTMLElement => Boolean(pane && pane.offsetParent !== null));
+
+    if (panes.length === 0) {
+      return { targetId: null, side: null };
+    }
+
+    const orderedPanes = [...panes].sort((leftPane, rightPane) => {
+      const leftRect = leftPane.getBoundingClientRect();
+      const rightRect = rightPane.getBoundingClientRect();
+      return leftRect.left - rightRect.left;
+    });
+
+    const targetPane =
+      orderedPanes.find((pane) => {
+        const rect = pane.getBoundingClientRect();
+        return clientX < rect.left + rect.width / 2;
+      }) ?? orderedPanes[orderedPanes.length - 1];
+    const targetId = targetPane.dataset.slotId ?? null;
+
+    if (!targetId) {
+      return { targetId: null, side: null };
+    }
+
+    const targetRect = targetPane.getBoundingClientRect();
+    return {
+      targetId,
+      side: clientX < targetRect.left + targetRect.width / 2 ? 'before' : 'after',
+    };
+  }, []);
+
+  const getDockDropPositionFromPoint = React.useCallback((clientX: number, clientY: number): DropPosition | null => {
+    const dock = document.querySelector<HTMLElement>('.dock');
+
+    if (!dock) {
+      return null;
+    }
+
+    const dockRect = dock.getBoundingClientRect();
+
+    if (clientX < dockRect.left || clientX > dockRect.right || clientY < dockRect.top || clientY > dockRect.bottom) {
+      return null;
+    }
+
+    const chips = dockIdsRef.current
+      .map((slotId) => dock.querySelector<HTMLElement>(`[data-slot-id="${slotId}"]`))
+      .filter((chip): chip is HTMLElement => Boolean(chip && chip.offsetParent !== null));
+
+    if (chips.length === 0) {
+      return { targetId: null, side: null };
+    }
+
+    const orderedChips = [...chips].sort((leftChip, rightChip) => {
+      const leftRect = leftChip.getBoundingClientRect();
+      const rightRect = rightChip.getBoundingClientRect();
+      return leftRect.left - rightRect.left;
+    });
+    const targetChip =
+      orderedChips.find((chip) => {
+        const rect = chip.getBoundingClientRect();
+        return clientX < rect.left + rect.width / 2;
+      }) ?? orderedChips[orderedChips.length - 1];
+    const targetId = targetChip.dataset.slotId ?? null;
+
+    if (!targetId) {
+      return { targetId: null, side: null };
+    }
+
+    const targetRect = targetChip.getBoundingClientRect();
+    return {
+      targetId,
+      side: clientX < targetRect.left + targetRect.width / 2 ? 'before' : 'after',
+    };
+  }, []);
+
+  const getStageDropPosition = React.useCallback(
+    (event: React.DragEvent<HTMLElement>): DropPosition => {
+      return getStageDropPositionFromClientX(event.clientX);
+    },
+    [getStageDropPositionFromClientX],
+  );
+
+  const animateSlotReflow = React.useCallback((draggedId: string, applyMove: () => void) => {
+    const visibleElements = Array.from(document.querySelectorAll<HTMLElement>('.provider-pane[data-slot-id], .dock-chip[data-slot-id]')).filter(
+      (element) => element.offsetParent !== null,
+    );
+    const firstRects = new Map<string, DOMRect>();
+
+    visibleElements.forEach((element) => {
+      const slotId = element.dataset.slotId;
+
+      if (slotId && slotId !== draggedId) {
+        firstRects.set(slotId, element.getBoundingClientRect());
+      }
+    });
+
+    flushSync(applyMove);
+
+    window.requestAnimationFrame(() => {
+      Array.from(document.querySelectorAll<HTMLElement>('.provider-pane[data-slot-id], .dock-chip[data-slot-id]')).forEach((element) => {
+        const slotId = element.dataset.slotId;
+
+        if (!slotId || slotId === draggedId || element.offsetParent === null) {
+          return;
+        }
+
+        const firstRect = firstRects.get(slotId);
+
+        if (!firstRect) {
+          return;
+        }
+
+        const lastRect = element.getBoundingClientRect();
+        const deltaX = firstRect.left - lastRect.left;
+        const deltaY = firstRect.top - lastRect.top;
+
+        if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) {
+          return;
+        }
+
+        element.animate(
+          [
+            { transform: `translate(${deltaX}px, ${deltaY}px)` },
+            { transform: 'translate(0, 0)' },
+          ],
+          {
+            duration: 190,
+            easing: 'cubic-bezier(0.2, 0, 0, 1)',
+          },
+        );
+      });
+    });
+  }, []);
+
+  const previewSlotMove = React.useCallback(
+    (id: string, destArrName: 'stage' | 'dock', targetId: string | null, side: 'before' | 'after' | null) => {
+      const previewKey = `${id}:${destArrName}:${targetId ?? 'end'}:${side ?? 'end'}`;
+
+      if (lastDragPreviewRef.current === previewKey) {
+        return;
+      }
+
+      lastDragPreviewRef.current = previewKey;
+      animateSlotReflow(id, () => moveSlotToPosition(id, destArrName, targetId, side));
+    },
+    [animateSlotReflow, moveSlotToPosition],
+  );
+
+  const handleStageHeaderClickCapture = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!suppressNextHeaderClickRef.current) {
+      return;
+    }
+
+    suppressNextHeaderClickRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
+  const handleStageHeaderPointerDown = React.useCallback(
+    (slotId: string, event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+
+      const draggedElement = document.querySelector<HTMLElement>(`.provider-pane[data-slot-id="${slotId}"]`);
+      const draggedRect = draggedElement?.getBoundingClientRect();
+
+      stagePointerDragRef.current = {
+        id: slotId,
+        startX: event.clientX,
+        startY: event.clientY,
+        grabOffsetX: draggedRect ? event.clientX - draggedRect.left : 0,
+        grabOffsetY: draggedRect ? event.clientY - draggedRect.top : 0,
+        active: false,
+      };
+
+      const updateDraggedElementOffset = (pointerEvent: PointerEvent, dragState: StagePointerDrag) => {
+        const draggedElement = document.querySelector<HTMLElement>(`.provider-pane[data-slot-id="${slotId}"]`);
+        const stageGrid = draggedElement?.closest<HTMLElement>('.stage-grid');
+
+        if (!draggedElement || !stageGrid) {
+          return;
+        }
+
+        const stageGridRect = stageGrid.getBoundingClientRect();
+        const layoutLeft = stageGridRect.left + draggedElement.offsetLeft;
+        const layoutTop = stageGridRect.top + draggedElement.offsetTop;
+        const nextX = pointerEvent.clientX - dragState.grabOffsetX - layoutLeft;
+        const nextY = pointerEvent.clientY - dragState.grabOffsetY - layoutTop;
+
+        draggedElement.style.setProperty('--drag-x', `${nextX}px`);
+        draggedElement.style.setProperty('--drag-y', `${nextY}px`);
+      };
+
+      const clearDraggedElementOffset = () => {
+        const draggedElement = document.querySelector<HTMLElement>(`.provider-pane[data-slot-id="${slotId}"]`);
+
+        draggedElement?.style.removeProperty('--drag-x');
+        draggedElement?.style.removeProperty('--drag-y');
+      };
+
+      const handlePointerMove = (pointerEvent: PointerEvent) => {
+        const dragState = stagePointerDragRef.current;
+
+        if (!dragState || dragState.id !== slotId) {
+          return;
+        }
+
+        const deltaX = pointerEvent.clientX - dragState.startX;
+        const deltaY = pointerEvent.clientY - dragState.startY;
+
+        if (!dragState.active) {
+          if (Math.hypot(deltaX, deltaY) < 6) {
+            return;
+          }
+
+          dragState.active = true;
+          draggedIdRef.current = slotId;
+          lastDragPreviewRef.current = null;
+          document.body.classList.add('stage-pointer-dragging');
+          document.getSelection()?.removeAllRanges();
+          setDraggingSlotId(slotId);
+        }
+
+        pointerEvent.preventDefault();
+        document.getSelection()?.removeAllRanges();
+        updateDraggedElementOffset(pointerEvent, dragState);
+
+        const dockPosition = getDockDropPositionFromPoint(pointerEvent.clientX, pointerEvent.clientY);
+
+        if (dockPosition) {
+          previewSlotMove(slotId, 'dock', dockPosition.targetId, dockPosition.side);
+          return;
+        }
+
+        const stagePosition = getStageDropPositionFromClientX(pointerEvent.clientX);
+        previewSlotMove(slotId, 'stage', stagePosition.targetId, stagePosition.side);
+      };
+
+      const handlePointerUp = (pointerEvent: PointerEvent) => {
+        const dragState = stagePointerDragRef.current;
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', handlePointerUp);
+        window.removeEventListener('pointercancel', handlePointerUp);
+
+        if (dragState?.active) {
+          pointerEvent.preventDefault();
+          suppressNextHeaderClickRef.current = true;
+          window.setTimeout(() => {
+            suppressNextHeaderClickRef.current = false;
+          }, 0);
+        }
+
+        stagePointerDragRef.current = null;
+        draggedIdRef.current = null;
+        lastDragPreviewRef.current = null;
+        document.body.classList.remove('stage-pointer-dragging');
+        document.getSelection()?.removeAllRanges();
+        clearDraggedElementOffset();
+        setDraggingSlotId(null);
+      };
+
+      window.addEventListener('pointermove', handlePointerMove, { passive: false });
+      window.addEventListener('pointerup', handlePointerUp);
+      window.addEventListener('pointercancel', handlePointerUp);
+    },
+    [getDockDropPositionFromPoint, getStageDropPositionFromClientX, previewSlotMove],
+  );
+
   const handleSlotDragStart = React.useCallback((slotId: string, event: React.DragEvent<HTMLElement>) => {
     draggedIdRef.current = slotId;
+    lastDragPreviewRef.current = null;
+    setDraggingSlotId(slotId);
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', slotId);
+
+    const dragImage = event.currentTarget.closest<HTMLElement>('.provider-pane') ?? event.currentTarget;
+    const rect = dragImage.getBoundingClientRect();
+    event.dataTransfer.setDragImage(dragImage, Math.min(event.clientX - rect.left, rect.width), Math.min(event.clientY - rect.top, rect.height));
   }, []);
 
   const handleSlotDragEnd = React.useCallback(() => {
     draggedIdRef.current = null;
+    lastDragPreviewRef.current = null;
+    setDraggingSlotId(null);
   }, []);
 
-  const handleSlotDragOver = React.useCallback((event: React.DragEvent<HTMLElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = 'move';
-  }, []);
+  const handleSlotDragOver = React.useCallback(
+    (destArrName: 'stage' | 'dock', targetId: string, event: React.DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = 'move';
+
+      const draggedId = draggedIdRef.current || event.dataTransfer.getData('text/plain');
+
+      if (!draggedId || draggedId === targetId) {
+        return;
+      }
+
+      previewSlotMove(draggedId, destArrName, targetId, getDropSide(event));
+    },
+    [getDropSide, previewSlotMove],
+  );
 
   const handleSlotDrop = React.useCallback(
     (destArrName: 'stage' | 'dock', targetId: string, event: React.DragEvent<HTMLElement>) => {
@@ -550,15 +880,46 @@ function App() {
 
       moveSlotToPosition(draggedId, destArrName, targetId, getDropSide(event));
       draggedIdRef.current = null;
+      lastDragPreviewRef.current = null;
+      setDraggingSlotId(null);
     },
     [getDropSide, moveSlotToPosition],
   );
 
-  const handleContainerDragOver = React.useCallback((event: React.DragEvent<HTMLElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = 'move';
-  }, []);
+  const handleContainerDragOver = React.useCallback(
+    (destArrName: 'stage' | 'dock', event: React.DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = 'move';
+
+      const draggedId = draggedIdRef.current || event.dataTransfer.getData('text/plain');
+
+      if (!draggedId) {
+        return;
+      }
+
+      previewSlotMove(draggedId, destArrName, null, null);
+    },
+    [previewSlotMove],
+  );
+
+  const handleStageContainerDragOver = React.useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = 'move';
+
+      const draggedId = draggedIdRef.current || event.dataTransfer.getData('text/plain');
+
+      if (!draggedId) {
+        return;
+      }
+
+      const { targetId, side } = getStageDropPosition(event);
+      previewSlotMove(draggedId, 'stage', targetId, side);
+    },
+    [getStageDropPosition, previewSlotMove],
+  );
 
   const handleContainerDrop = React.useCallback(
     (destArrName: 'stage' | 'dock', event: React.DragEvent<HTMLElement>) => {
@@ -573,8 +934,36 @@ function App() {
 
       moveSlotToPosition(draggedId, destArrName, null, null);
       draggedIdRef.current = null;
+      lastDragPreviewRef.current = null;
+      setDraggingSlotId(null);
     },
     [moveSlotToPosition],
+  );
+
+  const handleStageContainerDrop = React.useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const draggedId = draggedIdRef.current || event.dataTransfer.getData('text/plain');
+
+      if (!draggedId) {
+        return;
+      }
+
+      const { targetId, side } = getStageDropPosition(event);
+
+      if (targetId) {
+        moveSlotToPosition(draggedId, 'stage', targetId, side);
+      } else {
+        moveSlotToPosition(draggedId, 'stage', null, null);
+      }
+
+      draggedIdRef.current = null;
+      lastDragPreviewRef.current = null;
+      setDraggingSlotId(null);
+    },
+    [getStageDropPosition, moveSlotToPosition],
   );
 
   const moveSlotToStage = React.useCallback((slotId: string) => {
@@ -944,6 +1333,8 @@ function App() {
           className={`webview-panel ${memoPanelOpen ? 'view-hidden' : ''}`}
           aria-label="Claude, ChatGPT, and Gemini webviews"
           aria-hidden={memoPanelOpen}
+          onDragOver={handleStageContainerDragOver}
+          onDrop={handleStageContainerDrop}
         >
           {webviewCapturePreloadUrl ? (
             <>
@@ -964,8 +1355,8 @@ function App() {
               <div
                 className={`stage-grid ${isStageGrid ? 'grid2x2' : 'row'}`}
                 style={stageGridStyle}
-                onDragOver={handleContainerDragOver}
-                onDrop={(event) => handleContainerDrop('stage', event)}
+                onDragOver={handleStageContainerDragOver}
+                onDrop={handleStageContainerDrop}
               >
                 {stageIds.length === 0 && <div className="stage-empty">Open a docked slot to start.</div>}
                 {slots.map((slot) => {
@@ -981,11 +1372,9 @@ function App() {
                   return (
                     <div
                       key={slot.id}
-                      className="provider-pane expanded"
-                      draggable={isInStage}
-                      onDragStart={(event) => handleSlotDragStart(slot.id, event)}
-                      onDragEnd={handleSlotDragEnd}
-                      onDragOver={handleSlotDragOver}
+                      className={`provider-pane expanded ${draggingSlotId === slot.id ? 'dragging' : ''}`}
+                      data-slot-id={slot.id}
+                      onDragOver={(event) => handleSlotDragOver('stage', slot.id, event)}
                       onDrop={(event) => handleSlotDrop('stage', slot.id, event)}
                       style={{ display: isInStage ? undefined : 'none', order: isInStage ? stageIndex : undefined }}
                     >
@@ -995,6 +1384,12 @@ function App() {
                         canDock={stageIds.length > 1}
                         canGoBack={navigationState.canGoBack}
                         canGoForward={navigationState.canGoForward}
+                        onPointerDown={(event) => {
+                          if (isInStage) {
+                            handleStageHeaderPointerDown(slot.id, event);
+                          }
+                        }}
+                        onClickCapture={handleStageHeaderClickCapture}
                         onBack={() => goSlotBack(slot.id)}
                         onForward={() => goSlotForward(slot.id)}
                         onReload={() => reloadSlot(slot.id)}
@@ -1013,6 +1408,14 @@ function App() {
                     </div>
                   );
                 })}
+                {draggingSlotId && (
+                  <div
+                    className="stage-drop-overlay"
+                    aria-hidden="true"
+                    onDragOver={handleStageContainerDragOver}
+                    onDrop={handleStageContainerDrop}
+                  />
+                )}
               </div>
             </>
           ) : (
@@ -1029,13 +1432,13 @@ function App() {
                 aria-label="Expand broadcast bar"
                 onClick={() => setBroadcastCollapsed(false)}
               >
-                ^
+                v
               </button>
             )}
             <section
               className={`dock ${dockMinimized ? 'minimized' : ''}`}
               aria-label="Dock"
-              onDragOver={handleContainerDragOver}
+              onDragOver={(event) => handleContainerDragOver('dock', event)}
               onDrop={(event) => handleContainerDrop('dock', event)}
             >
             <div className="dock-header">
@@ -1060,14 +1463,15 @@ function App() {
                 return (
                   <div
                     key={slot.id}
-                    className="dock-chip"
+                    className={`dock-chip ${draggingSlotId === slot.id ? 'dragging' : ''}`}
+                    data-slot-id={slot.id}
                     role="button"
                     tabIndex={0}
                     draggable
                     title={`${provider.label} - ${slot.title}`}
                     onDragStart={(event) => handleSlotDragStart(slot.id, event)}
                     onDragEnd={handleSlotDragEnd}
-                    onDragOver={handleSlotDragOver}
+                    onDragOver={(event) => handleSlotDragOver('dock', slot.id, event)}
                     onDrop={(event) => handleSlotDrop('dock', slot.id, event)}
                     onClick={() => moveSlotToStage(slot.id)}
                     onKeyDown={(event) => {
@@ -1108,7 +1512,7 @@ function App() {
                 aria-label="Collapse broadcast bar"
                 onClick={() => setBroadcastCollapsed(true)}
               >
-                v
+                ^
               </button>
               <textarea
                 className="broadcast-input"
