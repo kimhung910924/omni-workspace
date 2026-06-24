@@ -609,9 +609,10 @@ function App() {
     return event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
   }, []);
 
-  const getStageDropPositionFromClientX = React.useCallback((clientX: number): DropPosition => {
-    const stageRoot = document.querySelector<HTMLElement>('.webview-panel');
+  const getStageDropPositionFromPoint = React.useCallback((clientX: number, clientY: number): DropPosition => {
+    const stageRoot = document.querySelector<HTMLElement>('.stage-grid');
     const draggedId = draggedIdRef.current;
+    const remainingStageIds = stageIdsRef.current.filter((slotId) => slotId !== draggedId);
     const panes = stageIdsRef.current
       .filter((slotId) => slotId !== draggedId)
       .map((slotId) => stageRoot?.querySelector<HTMLElement>(`[data-slot-id="${slotId}"]`) ?? null)
@@ -619,6 +620,23 @@ function App() {
 
     if (panes.length === 0) {
       return { targetId: null, side: null };
+    }
+
+    if (stageRoot?.classList.contains('grid2x2')) {
+      const stageRect = stageRoot.getBoundingClientRect();
+      const column = clientX < stageRect.left + stageRect.width / 2 ? 0 : 1;
+      const row = clientY < stageRect.top + stageRect.height / 2 ? 0 : 1;
+      const insertIndex = row * 2 + column;
+      const targetId = remainingStageIds[insertIndex] ?? remainingStageIds[remainingStageIds.length - 1] ?? null;
+
+      if (!targetId) {
+        return { targetId: null, side: null };
+      }
+
+      return {
+        targetId,
+        side: insertIndex < remainingStageIds.length ? 'before' : 'after',
+      };
     }
 
     const orderedPanes = [...panes].sort((leftPane, rightPane) => {
@@ -691,9 +709,9 @@ function App() {
 
   const getStageDropPosition = React.useCallback(
     (event: React.DragEvent<HTMLElement>): DropPosition => {
-      return getStageDropPositionFromClientX(event.clientX);
+      return getStageDropPositionFromPoint(event.clientX, event.clientY);
     },
-    [getStageDropPositionFromClientX],
+    [getStageDropPositionFromPoint],
   );
 
   const animateSlotReflow = React.useCallback((draggedId: string, applyMove: () => void) => {
@@ -849,7 +867,7 @@ function App() {
           return;
         }
 
-        const stagePosition = getStageDropPositionFromClientX(pointerEvent.clientX);
+        const stagePosition = getStageDropPositionFromPoint(pointerEvent.clientX, pointerEvent.clientY);
         previewSlotMove(slotId, 'stage', stagePosition.targetId, stagePosition.side);
       };
 
@@ -880,7 +898,7 @@ function App() {
       window.addEventListener('pointerup', handlePointerUp);
       window.addEventListener('pointercancel', handlePointerUp);
     },
-    [getDockDropPositionFromPoint, getStageDropPositionFromClientX, previewSlotMove],
+    [getDockDropPositionFromPoint, getStageDropPositionFromPoint, previewSlotMove],
   );
 
   const handleSlotDragStart = React.useCallback((slotId: string, event: React.DragEvent<HTMLElement>) => {
@@ -913,9 +931,15 @@ function App() {
         return;
       }
 
+      if (destArrName === 'stage') {
+        const { targetId: stageTargetId, side } = getStageDropPosition(event);
+        previewSlotMove(draggedId, 'stage', stageTargetId, side);
+        return;
+      }
+
       previewSlotMove(draggedId, destArrName, targetId, getDropSide(event));
     },
-    [getDropSide, previewSlotMove],
+    [getDropSide, getStageDropPosition, previewSlotMove],
   );
 
   const handleSlotDrop = React.useCallback(
@@ -929,12 +953,18 @@ function App() {
         return;
       }
 
-      moveSlotToPosition(draggedId, destArrName, targetId, getDropSide(event));
+      if (destArrName === 'stage') {
+        const { targetId: stageTargetId, side } = getStageDropPosition(event);
+        moveSlotToPosition(draggedId, 'stage', stageTargetId, side);
+      } else {
+        moveSlotToPosition(draggedId, destArrName, targetId, getDropSide(event));
+      }
+
       draggedIdRef.current = null;
       lastDragPreviewRef.current = null;
       setDraggingSlotId(null);
     },
-    [getDropSide, moveSlotToPosition],
+    [getDropSide, getStageDropPosition, moveSlotToPosition],
   );
 
   const handleContainerDragOver = React.useCallback(
