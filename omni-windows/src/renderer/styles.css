@@ -472,7 +472,7 @@ button { font: inherit; }
 
 .slot-header {
   display: grid;
-  grid-template-columns: minmax(96px, 1fr) minmax(0, auto) minmax(124px, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -511,6 +511,15 @@ body.stage-pointer-dragging .provider-webview {
   justify-content: flex-end;
 }
 
+.slot-header.compact {
+  gap: 4px;
+  padding: 5px 4px;
+}
+
+.slot-header.compact .slot-header-group {
+  gap: 2px;
+}
+
 .slot-icon-button {
   display: inline-flex;
   align-items: center;
@@ -525,6 +534,28 @@ body.stage-pointer-dragging .provider-webview {
   font-size: 16px;
   font-weight: 800;
   line-height: 1;
+}
+
+.slot-header.compact .slot-icon-button {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.slot-button-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.slot-header.compact .slot-button-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .slot-icon-button:hover:not(:disabled) {
@@ -562,6 +593,17 @@ body.stage-pointer-dragging .provider-webview {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.slot-header.compact .slot-provider {
+  gap: 4px;
+  font-size: 11px;
+}
+
+.slot-header.compact .slot-provider .provider-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
 }
 
 .provider-webview {

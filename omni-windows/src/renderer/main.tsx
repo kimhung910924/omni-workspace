@@ -1565,6 +1565,7 @@ function App() {
                       <SlotHeader
                         providerId={slot.providerId}
                         label={provider.label}
+                        compact={stageIds.length === MAX_STAGE_SLOTS && !isStageGrid}
                         canDock={stageIds.length > 1}
                         canGoBack={navigationState.canGoBack}
                         canGoForward={navigationState.canGoForward}
