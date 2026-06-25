@@ -45,6 +45,13 @@ type NavigationState = {
   isDomReady: boolean;
 };
 
+type Tab = {
+  id: string;
+  title: string;
+  kind: 'group';
+  group: Group;
+};
+
 type SidebarView = 'workspace-panel' | 'prompt-library' | null;
 type DropPosition = { targetId: string | null; side: 'before' | 'after' | null };
 type StagePointerDrag = {
@@ -58,6 +65,7 @@ type StagePointerDrag = {
 
 const MAX_SLOTS = 8;
 const MAX_STAGE_SLOTS = 4;
+const MAX_TABS = 4; // TODO: Replace with free/pro tier limits.
 const DEFAULT_STARTUP_PROVIDER_IDS: ProviderId[] = ['claude', 'chatgpt', 'gemini'];
 
 const PROVIDERS: Array<{
@@ -136,8 +144,30 @@ function createNewSlot(providerId: ProviderId): Slot {
   };
 }
 
+function createGroupTab(group: Group): Tab {
+  return {
+    id: createId(),
+    title: '새그룹',
+    kind: 'group',
+    group,
+  };
+}
+
 function createInitialGroup(): Group {
   const slots = DEFAULT_STARTUP_PROVIDER_IDS.map((providerId) => createInitialSlot(providerId));
+
+  return {
+    id: createId(),
+    slots,
+    stageIds: slots.map((slot) => slot.id),
+    dockIds: [],
+    layoutMode: 'row',
+    dockMinimized: false,
+  };
+}
+
+function createBlankGroup(): Group {
+  const slots = DEFAULT_STARTUP_PROVIDER_IDS.map((providerId) => createNewSlot(providerId));
 
   return {
     id: createId(),
@@ -204,14 +234,23 @@ function getSourceHint(memo: Memo): string {
   }
 }
 
+function getInitialActiveSlotId(group: Group): string {
+  return group.stageIds[0] ?? group.slots[0]?.id ?? '';
+}
+
 function App() {
-  const [group, setGroup] = React.useState<Group>(() => loadGroup() ?? createInitialGroup());
+  const [tabs, setTabs] = React.useState<Tab[]>(() => [createGroupTab(loadGroup() ?? createInitialGroup())]);
+  const [activeTabId, setActiveTabId] = React.useState<string>(() => tabs[0]?.id ?? '');
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]!;
+  const group = activeTab.group;
   const { slots, stageIds, dockIds, layoutMode, dockMinimized } = group;
-  const [activeSlotId, setActiveSlotId] = React.useState<string>(() => stageIds[0] ?? slots[0]?.id ?? '');
+  const [activeSlotId, setActiveSlotId] = React.useState<string>(() => getInitialActiveSlotId(tabs[0]!.group));
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [sidebarView, setSidebarView] = React.useState<SidebarView>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = React.useState(false);
   const [addSlotModalOpen, setAddSlotModalOpen] = React.useState(false);
+  const [newTabModalOpen, setNewTabModalOpen] = React.useState(false);
+  const [newTabWorkspacePlaceholderOpen, setNewTabWorkspacePlaceholderOpen] = React.useState(false);
   const [memoPanelOpen, setMemoPanelOpen] = React.useState(false);
   const [memoSearch, setMemoSearch] = React.useState('');
   const [manualMemoText, setManualMemoText] = React.useState('');
@@ -257,13 +296,26 @@ function App() {
     [isStageGrid, stageIds.length],
   );
 
+  const setGroup = React.useCallback((updater: Group | ((currentGroup: Group) => Group)) => {
+    setTabs((currentTabs) =>
+      currentTabs.map((tab) => {
+        if (tab.id !== activeTabId) {
+          return tab;
+        }
+
+        const nextGroup = typeof updater === 'function' ? (updater as (currentGroup: Group) => Group)(tab.group) : updater;
+        return { ...tab, group: nextGroup };
+      }),
+    );
+  }, [activeTabId]);
+
   React.useEffect(() => {
     saveMemos(memos);
   }, [memos]);
 
   React.useEffect(() => {
-    saveGroup(group);
-  }, [group]);
+    saveGroup(activeTab.group);
+  }, [activeTab.group]);
 
   React.useEffect(() => {
     stageIdsRef.current = stageIds;
@@ -1179,6 +1231,121 @@ function App() {
     setSettingsMenuOpen(false);
   }, []);
 
+  const activateTab = React.useCallback((tab: Tab) => {
+    const nextActiveSlotId = getInitialActiveSlotId(tab.group);
+
+    setActiveTabId(tab.id);
+    setActiveSlotId(nextActiveSlotId);
+    activeSlotIdRef.current = nextActiveSlotId;
+    stageIdsRef.current = tab.group.stageIds;
+    dockIdsRef.current = tab.group.dockIds;
+    setMaximizedSlotId(null);
+  }, []);
+
+  const cleanupTabSlotState = React.useCallback((slotIds: string[]) => {
+    slotIds.forEach((slotId) => {
+      delete webviewRefs.current[slotId];
+      delete webviewReadyRef.current[slotId];
+      delete webviewRefCallbacks.current[slotId];
+    });
+
+    setNavigationStates((current) => {
+      const next = { ...current };
+      slotIds.forEach((slotId) => {
+        delete next[slotId];
+      });
+      return next;
+    });
+    setBroadcastStatuses((currentStatuses) => {
+      const nextStatuses = { ...currentStatuses };
+      slotIds.forEach((slotId) => {
+        delete nextStatuses[slotId];
+      });
+      return nextStatuses;
+    });
+  }, []);
+
+  const openNewTabModal = React.useCallback(() => {
+    if (tabs.length >= MAX_TABS) {
+      return;
+    }
+
+    setNewTabWorkspacePlaceholderOpen(false);
+    setNewTabModalOpen(true);
+  }, [tabs.length]);
+
+  const closeNewTabModal = React.useCallback(() => {
+    setNewTabModalOpen(false);
+    setNewTabWorkspacePlaceholderOpen(false);
+  }, []);
+
+  const handleCreateGroupTab = React.useCallback(() => {
+    if (tabs.length >= MAX_TABS) {
+      return;
+    }
+
+    const newGroup = createBlankGroup();
+    const newTab = createGroupTab(newGroup);
+
+    setTabs((currentTabs) => {
+      if (currentTabs.length >= MAX_TABS) {
+        return currentTabs;
+      }
+
+      return [...currentTabs, newTab];
+    });
+    setNavigationStates((current) => ({
+      ...current,
+      ...createInitialNavigationStates(newGroup.slots),
+    }));
+    setBroadcastStatuses((current) => ({
+      ...current,
+      ...createInitialBroadcastStatuses(newGroup.slots),
+    }));
+    activateTab(newTab);
+    closeNewTabModal();
+  }, [activateTab, closeNewTabModal, tabs.length]);
+
+  const handleWorkspaceTabPlaceholder = React.useCallback(() => {
+    setNewTabWorkspacePlaceholderOpen(true);
+  }, []);
+
+  const closeTab = React.useCallback((tabId: string) => {
+    setTabs((currentTabs) => {
+      if (currentTabs.length <= 1) {
+        return currentTabs;
+      }
+
+      const closingIndex = currentTabs.findIndex((tab) => tab.id === tabId);
+
+      if (closingIndex < 0) {
+        return currentTabs;
+      }
+
+      const closingTab = currentTabs[closingIndex];
+      const nextTabs = currentTabs.filter((tab) => tab.id !== tabId);
+      cleanupTabSlotState(closingTab.group.slots.map((slot) => slot.id));
+
+      setActiveTabId((currentActiveTabId) => {
+        if (currentActiveTabId !== tabId) {
+          return currentActiveTabId;
+        }
+
+        const nextTab = nextTabs[Math.min(closingIndex, nextTabs.length - 1)] ?? nextTabs[0];
+        const nextActiveSlotId = nextTab ? getInitialActiveSlotId(nextTab.group) : '';
+        setActiveSlotId(nextActiveSlotId);
+        activeSlotIdRef.current = nextActiveSlotId;
+        stageIdsRef.current = nextTab?.group.stageIds ?? [];
+        dockIdsRef.current = nextTab?.group.dockIds ?? [];
+        setMaximizedSlotId(null);
+
+        return nextTab?.id ?? '';
+      });
+
+      return nextTabs;
+    });
+  }, [cleanupTabSlotState]);
+
   const handleReturnToStage = React.useCallback(() => {
     setSidebarView(null);
     setMemoPanelOpen(false);
@@ -1545,31 +1712,54 @@ function App() {
       <main className="main-area">
         <header className="topbar" aria-label="Workspace status">
           <div className="topbar-tabs" role="tablist" aria-label="Workspace tabs">
-            {slots.map((slot) => {
-              const provider = getProviderConfig(slot.providerId);
-
-              return (
-              <button
-                key={slot.id}
-                className={`topbar-tab ${!memoPanelOpen && slot.id === activeSlotId ? 'active' : ''}`}
-                type="button"
+            {tabs.map((tab) => (
+              <div
+                key={tab.id}
+                className={`topbar-tab ${activeTabId === tab.id ? 'active' : ''}`}
                 role="tab"
-                aria-selected={!memoPanelOpen && slot.id === activeSlotId}
-                onClick={() => handleWorkspaceSelect(slot.id)}
+                tabIndex={0}
+                aria-selected={activeTabId === tab.id}
+                onClick={() => activateTab(tab)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    activateTab(tab);
+                  }
+                }}
               >
-                <ProviderIcon providerId={provider.id} label={provider.label} />
-                {provider.label}
-              </button>
-              );
-            })}
+                <span className="topbar-tab-title">{tab.title}</span>
+                {tabs.length > 1 && (
+                  <button
+                    className="topbar-tab-close"
+                    type="button"
+                    aria-label={`${tab.title} 닫기`}
+                    title="닫기"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeTab(tab.id);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        closeTab(tab.id);
+                      }
+                    }}
+                  >
+                    x
+                  </button>
+                )}
+              </div>
+            ))}
             <button
-              className={`topbar-tab ${memoPanelOpen ? 'active' : ''}`}
+              className="topbar-tab topbar-tab-add"
               type="button"
-              role="tab"
-              aria-selected={memoPanelOpen}
-              onClick={handleMemoPanelSelect}
+              aria-label="새 탭 추가"
+              title="새 탭 추가"
+              disabled={tabs.length >= MAX_TABS}
+              onClick={openNewTabModal}
             >
-              Memos
+              +
             </button>
           </div>
           <div className="session-hint">Persistent session: {activeProvider.partition}</div>
@@ -1898,6 +2088,50 @@ function App() {
                   </button>
                 ))}
               </div>
+            </section>
+          </div>
+        )}
+
+        {newTabModalOpen && (
+          <div className="new-tab-modal-backdrop" role="presentation" onMouseDown={closeNewTabModal}>
+            <section
+              className="new-tab-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="new-tab-modal-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <header className="new-tab-modal-header">
+                <h2 id="new-tab-modal-title">새 탭 추가</h2>
+                <button className="new-tab-modal-close" type="button" aria-label="닫기" onClick={closeNewTabModal}>
+                  x
+                </button>
+              </header>
+              <div className="new-tab-choice-list">
+                <button className="new-tab-choice-button" type="button" onClick={handleCreateGroupTab}>
+                  <span className="new-tab-choice-icon" aria-hidden="true">
+                    +
+                  </span>
+                  <span>
+                    <span className="new-tab-choice-title">새그룹</span>
+                    <span className="new-tab-choice-description">기본 3개 슬롯으로 독립 그룹 탭을 추가합니다.</span>
+                  </span>
+                </button>
+                <button className="new-tab-choice-button" type="button" onClick={handleWorkspaceTabPlaceholder}>
+                  <span className="new-tab-choice-icon" aria-hidden="true">
+                    W
+                  </span>
+                  <span>
+                    <span className="new-tab-choice-title">워크스페이스</span>
+                    <span className="new-tab-choice-description">저장된 워크스페이스 탭은 준비 중입니다.</span>
+                  </span>
+                </button>
+              </div>
+              {newTabWorkspacePlaceholderOpen && (
+                <div className="new-tab-placeholder" role="status">
+                  워크스페이스 - 준비 중
+                </div>
+              )}
             </section>
           </div>
         )}
