@@ -7,7 +7,8 @@ import { SlotHeader } from './SlotHeader';
 import { providerAdapters, type ProviderWebview, type SendResult } from './providerAdapters';
 import { getInitialProviderUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
 import { createMemo, loadMemos, saveMemos } from './features/memos/memoStore';
-import { loadGroup, saveGroup, type Group } from './groupStore';
+import type { Group } from './groupStore';
+import { canCreateWorkspace, createWorkspace } from './workspaceStore';
 import type { Memo } from './features/memos/types';
 import type { Slot } from './types';
 
@@ -45,12 +46,22 @@ type NavigationState = {
   isDomReady: boolean;
 };
 
-type Tab = {
+type GroupTab = {
   id: string;
   title: string;
   kind: 'group';
   group: Group;
 };
+
+type WorkspaceTab = {
+  id: string;
+  title: string;
+  kind: 'workspace';
+  workspaceId: string;
+  group: Group;
+};
+
+type Tab = GroupTab | WorkspaceTab;
 
 type SidebarView = 'workspace-panel' | 'prompt-library' | null;
 type DropPosition = { targetId: string | null; side: 'before' | 'after' | null };
@@ -239,7 +250,7 @@ function getInitialActiveSlotId(group: Group): string {
 }
 
 function App() {
-  const [tabs, setTabs] = React.useState<Tab[]>(() => [createGroupTab(loadGroup() ?? createInitialGroup())]);
+  const [tabs, setTabs] = React.useState<Tab[]>(() => [createGroupTab(createBlankGroup())]);
   const [activeTabId, setActiveTabId] = React.useState<string>(() => tabs[0]?.id ?? '');
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]!;
   const group = activeTab.group;
@@ -251,6 +262,9 @@ function App() {
   const [addSlotModalOpen, setAddSlotModalOpen] = React.useState(false);
   const [newTabModalOpen, setNewTabModalOpen] = React.useState(false);
   const [newTabWorkspacePlaceholderOpen, setNewTabWorkspacePlaceholderOpen] = React.useState(false);
+  const [workspacePromotionOpen, setWorkspacePromotionOpen] = React.useState(false);
+  const [workspacePromotionName, setWorkspacePromotionName] = React.useState('');
+  const [workspacePromotionError, setWorkspacePromotionError] = React.useState('');
   const [memoPanelOpen, setMemoPanelOpen] = React.useState(false);
   const [memoSearch, setMemoSearch] = React.useState('');
   const [manualMemoText, setManualMemoText] = React.useState('');
@@ -312,10 +326,6 @@ function App() {
   React.useEffect(() => {
     saveMemos(memos);
   }, [memos]);
-
-  React.useEffect(() => {
-    saveGroup(activeTab.group);
-  }, [activeTab.group]);
 
   React.useEffect(() => {
     stageIdsRef.current = stageIds;
@@ -1279,6 +1289,77 @@ function App() {
     setNewTabWorkspacePlaceholderOpen(false);
   }, []);
 
+  const openWorkspacePromotion = React.useCallback(() => {
+    if (activeTab.kind !== 'group') {
+      return;
+    }
+
+    setWorkspacePromotionName('');
+    setWorkspacePromotionError('');
+    setWorkspacePromotionOpen(true);
+  }, [activeTab.kind]);
+
+  const closeWorkspacePromotion = React.useCallback(() => {
+    setWorkspacePromotionOpen(false);
+    setWorkspacePromotionName('');
+    setWorkspacePromotionError('');
+  }, []);
+
+  const confirmWorkspacePromotion = React.useCallback(
+    (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      if (activeTab.kind !== 'group') {
+        closeWorkspacePromotion();
+        return;
+      }
+
+      const name = workspacePromotionName.trim();
+
+      if (!name) {
+        setWorkspacePromotionError('Enter a workstation name.');
+        return;
+      }
+
+      if (!canCreateWorkspace()) {
+        setWorkspacePromotionError('You can save up to 8 workstations.');
+        return;
+      }
+
+      let workspace: ReturnType<typeof createWorkspace>;
+
+      try {
+        workspace = createWorkspace(name, {
+          slots: activeTab.group.slots,
+          stageIds: activeTab.group.stageIds,
+          dockIds: activeTab.group.dockIds,
+          layoutMode: activeTab.group.layoutMode,
+          dockMinimized: activeTab.group.dockMinimized,
+        });
+      } catch {
+        setWorkspacePromotionError('Could not save this workstation.');
+        return;
+      }
+
+      setTabs((currentTabs) =>
+        currentTabs.map((tab) => {
+          if (tab.id !== activeTabId || tab.kind !== 'group') {
+            return tab;
+          }
+
+          return {
+            ...tab,
+            kind: 'workspace',
+            workspaceId: workspace.id,
+            title: workspace.name,
+          };
+        }),
+      );
+      closeWorkspacePromotion();
+    },
+    [activeTab, activeTabId, closeWorkspacePromotion, workspacePromotionName],
+  );
+
   const handleCreateGroupTab = React.useCallback(() => {
     if (tabs.length >= MAX_TABS) {
       return;
@@ -1763,6 +1844,11 @@ function App() {
             </button>
           </div>
           <div className="session-hint">Persistent session: {activeProvider.partition}</div>
+          {activeTab.kind === 'group' && (
+            <button className="topbar-workspace-action" type="button" onClick={openWorkspacePromotion}>
+              Save as workstation
+            </button>
+          )}
         </header>
 
         {navigationNotice && (
@@ -2132,6 +2218,55 @@ function App() {
                   워크스페이스 - 준비 중
                 </div>
               )}
+            </section>
+          </div>
+        )}
+
+        {workspacePromotionOpen && (
+          <div className="workspace-promotion-backdrop" role="presentation" onMouseDown={closeWorkspacePromotion}>
+            <section
+              className="workspace-promotion-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="workspace-promotion-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <form onSubmit={confirmWorkspacePromotion}>
+                <header className="workspace-promotion-header">
+                  <h2 id="workspace-promotion-title">Save as workstation</h2>
+                  <button className="workspace-promotion-close" type="button" aria-label="Close" onClick={closeWorkspacePromotion}>
+                    x
+                  </button>
+                </header>
+                <div className="workspace-promotion-body">
+                  <label className="workspace-promotion-label" htmlFor="workspace-promotion-name">
+                    Name
+                  </label>
+                  <input
+                    id="workspace-promotion-name"
+                    className="workspace-promotion-input"
+                    value={workspacePromotionName}
+                    autoFocus
+                    onChange={(event) => {
+                      setWorkspacePromotionName(event.target.value);
+                      setWorkspacePromotionError('');
+                    }}
+                  />
+                  {workspacePromotionError && (
+                    <div className="workspace-promotion-error" role="alert">
+                      {workspacePromotionError}
+                    </div>
+                  )}
+                </div>
+                <footer className="workspace-promotion-footer">
+                  <button className="workspace-promotion-secondary" type="button" onClick={closeWorkspacePromotion}>
+                    Cancel
+                  </button>
+                  <button className="workspace-promotion-primary" type="submit">
+                    Save
+                  </button>
+                </footer>
+              </form>
             </section>
           </div>
         )}

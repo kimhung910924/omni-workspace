@@ -297,37 +297,42 @@ button { font: inherit; }
 .topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  padding: 10px 16px;
-  border-bottom: 1px solid #d9dee7;
-  background: #ffffff;
+  padding: 9px 16px 8px;
+  border-bottom: 1px solid #cfd8e3;
+  background: #eef2f7;
 }
 
 .topbar-tabs {
   position: relative;
   z-index: 1;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-end;
+  gap: 2px;
   min-width: 0;
   flex: 0 0 auto;
 }
 
 .topbar-tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-width: 86px;
-  height: 32px;
+  min-width: 92px;
+  max-width: 172px;
+  height: 34px;
   border: 1px solid transparent;
-  border-radius: 8px;
-  color: #667085;
-  background: transparent;
+  border-bottom-color: #cfd8e3;
+  border-radius: 10px 10px 0 0;
+  color: #475467;
+  background: #e3e8ef;
   font-size: 13px;
   font-weight: 800;
   cursor: pointer;
+  box-shadow: inset 0 -1px 0 #cfd8e3;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
 }
 
 .topbar-tab:disabled {
@@ -339,8 +344,8 @@ button { font: inherit; }
 
 .topbar-tab:hover {
   color: #111827;
-  border-color: #d1d7e0;
-  background: #f2f4f7;
+  border-color: #c5ceda;
+  background: #edf1f6;
 }
 
 .topbar-tab:disabled:hover {
@@ -351,14 +356,19 @@ button { font: inherit; }
 
 .topbar-tab.active {
   color: #111827;
-  border-color: #b9c7da;
-  background: #eef4ff;
+  z-index: 2;
+  height: 38px;
+  border-color: #9fb0c7;
+  border-bottom-color: #ffffff;
+  background: #ffffff;
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.9), 0 6px 14px rgba(15, 23, 42, 0.12);
 }
 
 .topbar-tab-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .topbar-tab-close {
@@ -388,8 +398,30 @@ button { font: inherit; }
 .topbar-tab-add {
   min-width: 32px;
   width: 32px;
+  height: 32px;
+  align-self: center;
+  border-radius: 8px;
   padding: 0;
   font-size: 18px;
+  box-shadow: none;
+}
+
+.topbar-workspace-action {
+  flex: 0 0 auto;
+  height: 32px;
+  border: 1px solid #b9c7da;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #1f2937;
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.topbar-workspace-action:hover {
+  border-color: #8ea4c0;
+  background: #f8fbff;
 }
 
 .session-hint {
@@ -1319,7 +1351,8 @@ body.stage-pointer-dragging .provider-webview {
 .memo-notice button,
 .memo-modal-close,
 .add-slot-modal-close,
-.new-tab-modal-close {
+.new-tab-modal-close,
+.workspace-promotion-close {
   border: 1px solid #d1d7e0;
   border-radius: 8px;
   color: #344054;
@@ -1505,6 +1538,113 @@ body.stage-pointer-dragging .provider-webview {
   background: #f8fafc;
   font-size: 13px;
   font-weight: 700;
+}
+
+.workspace-promotion-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 44;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.24);
+}
+
+.workspace-promotion-modal {
+  display: flex;
+  width: min(380px, 100%);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 72px rgba(15, 23, 42, 0.18);
+}
+
+.workspace-promotion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid #e4e7ec;
+}
+
+.workspace-promotion-header h2 {
+  margin: 0;
+  color: #111827;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.workspace-promotion-close {
+  width: 32px;
+  height: 32px;
+}
+
+.workspace-promotion-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+}
+
+.workspace-promotion-label {
+  color: #344054;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.workspace-promotion-input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #111827;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+.workspace-promotion-input:focus {
+  border-color: #8ea4c0;
+  outline: 3px solid #dbeafe;
+}
+
+.workspace-promotion-error {
+  color: #b42318;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workspace-promotion-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 14px 14px;
+}
+
+.workspace-promotion-primary,
+.workspace-promotion-secondary {
+  height: 34px;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.workspace-promotion-primary {
+  border: 1px solid #111827;
+  color: #ffffff;
+  background: #111827;
+}
+
+.workspace-promotion-secondary {
+  border: 1px solid #d1d7e0;
+  color: #344054;
+  background: #ffffff;
 }
 
 .memo-modal-backdrop {
