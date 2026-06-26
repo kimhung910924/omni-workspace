@@ -322,10 +322,15 @@ function App() {
       }),
     );
   }, [activeTabId]);
+  const setGroupRef = React.useRef(setGroup);
 
   React.useEffect(() => {
     saveMemos(memos);
   }, [memos]);
+
+  React.useEffect(() => {
+    setGroupRef.current = setGroup;
+  }, [setGroup]);
 
   React.useEffect(() => {
     stageIdsRef.current = stageIds;
@@ -486,7 +491,7 @@ function App() {
 
           if (navigatedUrl) {
             saveProviderUrl(providerId, navigatedUrl);
-            setGroup((currentGroup) => {
+            setGroupRef.current((currentGroup) => {
               const currentSlot = currentGroup.slots.find((slot) => slot.id === slotId);
 
               if (currentSlot?.currentUrl === navigatedUrl) {
@@ -508,7 +513,7 @@ function App() {
         webview.addEventListener('did-finish-load', () => updateSlotNavigationState(slotId));
         webview.addEventListener('page-title-updated', (event: Event & { title?: string }) => {
           const title = typeof event.title === 'string' && event.title.trim() ? event.title.trim() : getProviderConfig(providerId).label;
-          setGroup((currentGroup) => ({
+          setGroupRef.current((currentGroup) => ({
             ...currentGroup,
             slots: currentGroup.slots.map((currentSlot) => (currentSlot.id === slotId ? { ...currentSlot, title } : currentSlot)),
           }));
@@ -693,7 +698,7 @@ function App() {
         setActiveSlotId(nextActiveSlotId);
       }
     },
-    [slotsById],
+    [setGroup, slotsById],
   );
 
   const getDropSide = React.useCallback((event: React.DragEvent<HTMLElement>): 'before' | 'after' => {
@@ -1459,7 +1464,7 @@ function App() {
       const nextSlot = slots.find((slot) => slot.id !== slotId);
       return nextSlot?.id ?? '';
     });
-  }, [clearSlotNavigationState, slots]);
+  }, [clearSlotNavigationState, setGroup, slots]);
 
   const handleAddSlot = React.useCallback(() => {
     setAddSlotModalOpen(true);
@@ -1491,7 +1496,7 @@ function App() {
       [newSlot.id]: { state: 'idle', message: 'Ready' },
     }));
     setAddSlotModalOpen(false);
-  }, [group.slots.length]);
+  }, [group.slots.length, setGroup]);
 
   const handleManualMemoSave = React.useCallback(() => {
     const content = manualMemoText.trim();
