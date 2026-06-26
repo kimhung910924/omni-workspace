@@ -1518,6 +1518,7 @@ function App() {
 
   const handleCreateGroupTab = React.useCallback(() => {
     if (tabs.length >= MAX_TABS) {
+      setNavigationNotice('상단탭이 꽉 찼습니다.');
       return;
     }
 
@@ -1537,6 +1538,7 @@ function App() {
     });
 
     if (!wasAdded) {
+      setNavigationNotice('상단탭이 꽉 찼습니다.');
       return;
     }
 
@@ -1697,7 +1699,7 @@ function App() {
       }
 
       if (tabs.length >= MAX_TABS) {
-        setWorkspaceCreateError('열 수 있는 탭 개수를 초과했습니다.');
+        setWorkspaceCreateError('상단탭이 꽉 찼습니다.');
         return;
       }
 
