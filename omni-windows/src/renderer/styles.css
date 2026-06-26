@@ -1852,15 +1852,45 @@ body.stage-pointer-dragging .provider-webview {
   font-size: 12px;
 }
 
-.new-tab-placeholder {
+.new-tab-workspace-list-panel {
+  display: flex;
+  max-height: 320px;
+  flex-direction: column;
+  gap: 8px;
   margin: 0 14px 14px;
-  border: 1px dashed #cfd8e3;
-  border-radius: 8px;
-  padding: 12px;
-  color: #667085;
-  background: #f8fafc;
-  font-size: 13px;
-  font-weight: 700;
+  overflow-y: auto;
+  border-top: 1px solid #e4e7ec;
+  padding-top: 12px;
+}
+
+.new-tab-workspace-create-card {
+  width: 100%;
+}
+
+.new-tab-workspace-record-list {
+  gap: 7px;
+}
+
+.new-tab-workspace-record-card {
+  gap: 3px;
+  width: 100%;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.new-tab-workspace-record-card:hover {
+  border-color: #b9c7da;
+  background: #f8fbff;
+}
+
+.new-tab-workspace-record-card.active:hover {
+  border-color: #8ea4c0;
+  background: #eef4ff;
+}
+
+.new-tab-workspace-empty {
+  padding: 14px;
 }
 
 .workspace-promotion-backdrop {

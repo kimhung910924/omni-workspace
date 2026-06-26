@@ -8,7 +8,7 @@ import { providerAdapters, type ProviderWebview, type SendResult } from './provi
 import { getInitialProviderUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
 import { createMemo, loadMemos, saveMemos } from './features/memos/memoStore';
 import type { Group } from './groupStore';
-import { canCreateWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace } from './workspaceStore';
+import { canCreateWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace, updateWorkspace } from './workspaceStore';
 import type { Memo } from './features/memos/types';
 import type { Slot, WorkspaceRecord } from './types';
 
@@ -327,6 +327,7 @@ function App() {
   const [tabs, setTabs] = React.useState<Tab[]>(() => [createGroupTab(createBlankGroup())]);
   const [activeTabId, setActiveTabId] = React.useState<string>(() => tabs[0]?.id ?? '');
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]!;
+  const activeWorkspaceId = activeTab.kind === 'workspace' ? activeTab.workspaceId : null;
   const group = activeTab.group;
   const { slots, stageIds, dockIds, layoutMode, dockMinimized } = group;
   const [activeSlotId, setActiveSlotId] = React.useState<string>(() => getInitialActiveSlotId(tabs[0]!.group));
@@ -335,7 +336,7 @@ function App() {
   const [settingsMenuOpen, setSettingsMenuOpen] = React.useState(false);
   const [addSlotModalOpen, setAddSlotModalOpen] = React.useState(false);
   const [newTabModalOpen, setNewTabModalOpen] = React.useState(false);
-  const [newTabWorkspacePlaceholderOpen, setNewTabWorkspacePlaceholderOpen] = React.useState(false);
+  const [newTabWorkspaceListOpen, setNewTabWorkspaceListOpen] = React.useState(false);
   const [workspacePromotionOpen, setWorkspacePromotionOpen] = React.useState(false);
   const [workspacePromotionName, setWorkspacePromotionName] = React.useState('');
   const [workspacePromotionError, setWorkspacePromotionError] = React.useState('');
@@ -1434,13 +1435,13 @@ function App() {
       return;
     }
 
-    setNewTabWorkspacePlaceholderOpen(false);
+    setNewTabWorkspaceListOpen(false);
     setNewTabModalOpen(true);
   }, [tabs.length]);
 
   const closeNewTabModal = React.useCallback(() => {
     setNewTabModalOpen(false);
-    setNewTabWorkspacePlaceholderOpen(false);
+    setNewTabWorkspaceListOpen(false);
   }, []);
 
   const openWorkspacePromotion = React.useCallback(() => {
@@ -1522,14 +1523,21 @@ function App() {
 
     const newGroup = createBlankGroup();
     const newTab = createGroupTab(newGroup);
+    let wasAdded = false;
 
     setTabs((currentTabs) => {
       if (currentTabs.length >= MAX_TABS) {
         return currentTabs;
       }
 
+      wasAdded = true;
       return [...currentTabs, newTab];
     });
+
+    if (!wasAdded) {
+      return;
+    }
+
     setNavigationStates((current) => ({
       ...current,
       ...createInitialNavigationStates(newGroup.slots),
@@ -1543,7 +1551,7 @@ function App() {
   }, [activateTab, closeNewTabModal, tabs.length]);
 
   const handleWorkspaceTabPlaceholder = React.useCallback(() => {
-    setNewTabWorkspacePlaceholderOpen(true);
+    setNewTabWorkspaceListOpen((isOpen) => !isOpen);
   }, []);
 
   const closeTab = React.useCallback((tabId: string) => {
@@ -1586,6 +1594,21 @@ function App() {
     setWorkspaceRecords(listWorkspaces());
   }, []);
 
+  React.useEffect(() => {
+    if (activeTab.kind !== 'workspace' || activeWorkspaceId === null) {
+      return;
+    }
+
+    updateWorkspace(activeWorkspaceId, {
+      slots: activeTab.group.slots,
+      stageIds: activeTab.group.stageIds,
+      dockIds: activeTab.group.dockIds,
+      layoutMode: activeTab.group.layoutMode,
+      dockMinimized: activeTab.group.dockMinimized,
+    });
+    refreshWorkspaceRecords();
+  }, [activeTab.kind, activeTab.group, activeWorkspaceId, refreshWorkspaceRecords]);
+
   const closeWorkspacePanel = React.useCallback(() => {
     setSidebarView(null);
     setMemoPanelOpen(false);
@@ -1612,15 +1635,13 @@ function App() {
       const newTab = createWorkspaceTab(workspace);
       let wasAdded = false;
 
-      flushSync(() => {
-        setTabs((currentTabs) => {
-          if (currentTabs.length >= MAX_TABS) {
-            return currentTabs;
-          }
+      setTabs((currentTabs) => {
+        if (currentTabs.length >= MAX_TABS) {
+          return currentTabs;
+        }
 
-          wasAdded = true;
-          return [...currentTabs, newTab];
-        });
+        wasAdded = true;
+        return [...currentTabs, newTab];
       });
 
       if (!wasAdded) {
@@ -1695,15 +1716,13 @@ function App() {
       const newTab = createWorkspaceTab(workspace);
       let wasAdded = false;
 
-      flushSync(() => {
-        setTabs((currentTabs) => {
-          if (currentTabs.length >= MAX_TABS) {
-            return currentTabs;
-          }
+      setTabs((currentTabs) => {
+        if (currentTabs.length >= MAX_TABS) {
+          return currentTabs;
+        }
 
-          wasAdded = true;
-          return [...currentTabs, newTab];
-        });
+        wasAdded = true;
+        return [...currentTabs, newTab];
       });
 
       if (!wasAdded) {
@@ -1723,8 +1742,9 @@ function App() {
       activateTab(newTab);
       closeWorkspaceCreate();
       closeWorkspacePanel();
+      closeNewTabModal();
     },
-    [activateTab, closeWorkspaceCreate, closeWorkspacePanel, refreshWorkspaceRecords, tabs.length, workspaceCreateName],
+    [activateTab, closeNewTabModal, closeWorkspaceCreate, closeWorkspacePanel, refreshWorkspaceRecords, tabs.length, workspaceCreateName],
   );
 
   const openWorkspaceRename = React.useCallback((workspace: WorkspaceRecord) => {
@@ -2704,13 +2724,51 @@ function App() {
                   </span>
                   <span>
                     <span className="new-tab-choice-title">워크스페이스</span>
-                    <span className="new-tab-choice-description">저장된 워크스페이스 탭은 준비 중입니다.</span>
+                    <span className="new-tab-choice-description">저장된 워크스테이션을 탭으로 엽니다.</span>
                   </span>
                 </button>
               </div>
-              {newTabWorkspacePlaceholderOpen && (
-                <div className="new-tab-placeholder" role="status">
-                  워크스페이스 - 준비 중
+              {newTabWorkspaceListOpen && (
+                <div className="new-tab-workspace-list-panel">
+                  {canCreateWorkspace() && (
+                    <button className="workspace-create-card new-tab-workspace-create-card" type="button" onClick={openWorkspaceCreate}>
+                      <span className="workspace-create-icon" aria-hidden="true">
+                        +
+                      </span>
+                      <span>
+                        <span className="workspace-create-title">새 워크스테이션 만들기</span>
+                        <span className="workspace-create-description">기본 슬롯으로 새 작업 공간을 시작합니다.</span>
+                      </span>
+                    </button>
+                  )}
+
+                  {workspaceRecords.length === 0 ? (
+                    <div className="workspace-empty new-tab-workspace-empty">아직 저장된 워크스테이션이 없습니다</div>
+                  ) : (
+                    <div className="workspace-record-list new-tab-workspace-record-list">
+                      {workspaceRecords.map((workspace) => {
+                        const isOpen = openedWorkspaceIds.has(workspace.id);
+                        const isActive = activeTab.kind === 'workspace' && activeTab.workspaceId === workspace.id;
+
+                        return (
+                          <button
+                            key={workspace.id}
+                            className={`workspace-record-card new-tab-workspace-record-card ${isActive ? 'active' : ''}`}
+                            type="button"
+                            onClick={() => {
+                              openWorkspaceTab(workspace);
+                              closeNewTabModal();
+                            }}
+                          >
+                            <span className="workspace-record-name">{workspace.name}</span>
+                            <span className="workspace-record-meta">
+                              {workspace.slots.length} slots · {isActive ? '현재 탭' : isOpen ? '열려 있음' : '저장됨'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </section>
