@@ -11,7 +11,7 @@ function getStorageKey(providerId: ProviderId): string {
   return `${STORAGE_KEY_PREFIX}.${providerId}`;
 }
 
-function isRestorableUrl(providerId: ProviderId, value: string): boolean {
+export function isRestorableUrl(providerId: ProviderId, value: string): boolean {
   try {
     const url = new URL(value);
 

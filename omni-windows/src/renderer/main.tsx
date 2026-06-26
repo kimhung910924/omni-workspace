@@ -5,7 +5,7 @@ import './styles.css';
 import { ProviderIcon } from './ProviderIcon';
 import { SlotHeader } from './SlotHeader';
 import { providerAdapters, type ProviderWebview, type SendResult } from './providerAdapters';
-import { getInitialProviderUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
+import { getInitialProviderUrl, isRestorableUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
 import { createMemo, loadMemos, saveMemos } from './features/memos/memoStore';
 import type { Group } from './groupStore';
 import { canCreateWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace, updateWorkspace } from './workspaceStore';
@@ -619,18 +619,23 @@ function App() {
 
           if (navigatedUrl) {
             saveProviderUrl(providerId, navigatedUrl);
-            setGroupRef.current((currentGroup) => {
-              const currentSlot = currentGroup.slots.find((slot) => slot.id === slotId);
 
-              if (currentSlot?.currentUrl === navigatedUrl) {
-                return currentGroup;
-              }
+            if (isRestorableUrl(providerId, navigatedUrl)) {
+              setGroupRef.current((currentGroup) => {
+                const currentSlot = currentGroup.slots.find((slot) => slot.id === slotId);
 
-              return {
-                ...currentGroup,
-                slots: currentGroup.slots.map((slot) => (slot.id === slotId ? { ...slot, currentUrl: navigatedUrl } : slot)),
-              };
-            });
+                if (currentSlot?.currentUrl === navigatedUrl) {
+                  return currentGroup;
+                }
+
+                return {
+                  ...currentGroup,
+                  slots: currentGroup.slots.map((slot) =>
+                    slot.id === slotId ? { ...slot, currentUrl: navigatedUrl } : slot,
+                  ),
+                };
+              });
+            }
           }
 
           updateSlotNavigationState(slotId);
