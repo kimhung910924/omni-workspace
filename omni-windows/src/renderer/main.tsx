@@ -1525,13 +1525,15 @@ function App() {
     const newTab = createGroupTab(newGroup);
     let wasAdded = false;
 
-    setTabs((currentTabs) => {
-      if (currentTabs.length >= MAX_TABS) {
-        return currentTabs;
-      }
+    flushSync(() => {
+      setTabs((currentTabs) => {
+        if (currentTabs.length >= MAX_TABS) {
+          return currentTabs;
+        }
 
-      wasAdded = true;
-      return [...currentTabs, newTab];
+        wasAdded = true;
+        return [...currentTabs, newTab];
+      });
     });
 
     if (!wasAdded) {
@@ -1635,13 +1637,15 @@ function App() {
       const newTab = createWorkspaceTab(workspace);
       let wasAdded = false;
 
-      setTabs((currentTabs) => {
-        if (currentTabs.length >= MAX_TABS) {
-          return currentTabs;
-        }
+      flushSync(() => {
+        setTabs((currentTabs) => {
+          if (currentTabs.length >= MAX_TABS) {
+            return currentTabs;
+          }
 
-        wasAdded = true;
-        return [...currentTabs, newTab];
+          wasAdded = true;
+          return [...currentTabs, newTab];
+        });
       });
 
       if (!wasAdded) {
@@ -1716,13 +1720,15 @@ function App() {
       const newTab = createWorkspaceTab(workspace);
       let wasAdded = false;
 
-      setTabs((currentTabs) => {
-        if (currentTabs.length >= MAX_TABS) {
-          return currentTabs;
-        }
+      flushSync(() => {
+        setTabs((currentTabs) => {
+          if (currentTabs.length >= MAX_TABS) {
+            return currentTabs;
+          }
 
-        wasAdded = true;
-        return [...currentTabs, newTab];
+          wasAdded = true;
+          return [...currentTabs, newTab];
+        });
       });
 
       if (!wasAdded) {
