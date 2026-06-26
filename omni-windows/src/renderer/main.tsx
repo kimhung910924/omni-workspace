@@ -8,9 +8,9 @@ import { providerAdapters, type ProviderWebview, type SendResult } from './provi
 import { getInitialProviderUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
 import { createMemo, loadMemos, saveMemos } from './features/memos/memoStore';
 import type { Group } from './groupStore';
-import { canCreateWorkspace, createWorkspace } from './workspaceStore';
+import { canCreateWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace } from './workspaceStore';
 import type { Memo } from './features/memos/types';
-import type { Slot } from './types';
+import type { Slot, WorkspaceRecord } from './types';
 
 type WebviewNavigationEvent = Event & {
   url?: string;
@@ -164,6 +164,23 @@ function createGroupTab(group: Group): Tab {
   };
 }
 
+function createWorkspaceTab(workspace: WorkspaceRecord): Tab {
+  return {
+    id: createId(),
+    title: workspace.name,
+    kind: 'workspace',
+    workspaceId: workspace.id,
+    group: {
+      id: createId(),
+      slots: workspace.slots,
+      stageIds: workspace.stageIds,
+      dockIds: workspace.dockIds,
+      layoutMode: workspace.layoutMode,
+      dockMinimized: workspace.dockMinimized,
+    },
+  };
+}
+
 function createInitialGroup(): Group {
   const slots = DEFAULT_STARTUP_PROVIDER_IDS.map((providerId) => createInitialSlot(providerId));
 
@@ -199,6 +216,63 @@ function createInitialBroadcastStatuses(slots: Slot[]): Record<string, Broadcast
 }
 
 const LOAD_FAILURE_MESSAGE = '삭제되었거나 접근할 수 없는 대화방입니다. 메모는 그대로 보관됩니다.';
+
+const GEMINI_DEFAULT_TITLES = new Set(['gemini', 'google gemini']);
+
+function isMeaningfulGeminiTitle(value: string): boolean {
+  const title = value.trim();
+
+  if (title.length < 2) {
+    return false;
+  }
+
+  return !GEMINI_DEFAULT_TITLES.has(title.toLowerCase());
+}
+
+function createGeminiTitleScript(): string {
+  return `
+    (() => {
+      const rejectPatterns = [
+        /^(gemini|google gemini)$/i,
+        /^(new chat|recent|settings|help|privacy|terms)$/i,
+        /^(새 채팅|최근|설정|도움말|개인정보|약관)$/i,
+      ];
+      const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+      const isUsable = (value) => {
+        const text = clean(value);
+        return text.length >= 2 && text.length <= 80 && !rejectPatterns.some((pattern) => pattern.test(text));
+      };
+      const selectors = [
+        '[data-test-id*="conversation-title"]',
+        '[data-testid*="conversation-title"]',
+        '[aria-current="page"]',
+        'a[href*="/app/"][aria-current="page"]',
+        '[href*="/app/"][aria-current="page"]',
+        '.conversation-title',
+        '.chat-title',
+        'main h1',
+        'header h1',
+      ];
+
+      for (const selector of selectors) {
+        for (const element of document.querySelectorAll(selector)) {
+          const candidates = [
+            element.getAttribute('aria-label'),
+            element.getAttribute('title'),
+            element.textContent,
+          ];
+          const title = candidates.map(clean).find(isUsable);
+
+          if (title) {
+            return title;
+          }
+        }
+      }
+
+      return isUsable(document.title) ? clean(document.title) : null;
+    })();
+  `;
+}
 
 function formatMemoDate(value: number): string {
   return new Intl.DateTimeFormat('ko-KR', {
@@ -265,6 +339,15 @@ function App() {
   const [workspacePromotionOpen, setWorkspacePromotionOpen] = React.useState(false);
   const [workspacePromotionName, setWorkspacePromotionName] = React.useState('');
   const [workspacePromotionError, setWorkspacePromotionError] = React.useState('');
+  const [workspaceRecords, setWorkspaceRecords] = React.useState<WorkspaceRecord[]>(() => listWorkspaces());
+  const [workspacePanelNotice, setWorkspacePanelNotice] = React.useState('');
+  const [expandedWorkspaceId, setExpandedWorkspaceId] = React.useState<string | null>(null);
+  const [workspaceCreateOpen, setWorkspaceCreateOpen] = React.useState(false);
+  const [workspaceCreateName, setWorkspaceCreateName] = React.useState('');
+  const [workspaceCreateError, setWorkspaceCreateError] = React.useState('');
+  const [workspaceRenameTarget, setWorkspaceRenameTarget] = React.useState<WorkspaceRecord | null>(null);
+  const [workspaceRenameName, setWorkspaceRenameName] = React.useState('');
+  const [workspaceRenameError, setWorkspaceRenameError] = React.useState('');
   const [memoPanelOpen, setMemoPanelOpen] = React.useState(false);
   const [memoSearch, setMemoSearch] = React.useState('');
   const [manualMemoText, setManualMemoText] = React.useState('');
@@ -331,6 +414,12 @@ function App() {
   React.useEffect(() => {
     setGroupRef.current = setGroup;
   }, [setGroup]);
+
+  React.useEffect(() => {
+    if (tabs.length < MAX_TABS && workspacePanelNotice) {
+      setWorkspacePanelNotice('');
+    }
+  }, [tabs.length, workspacePanelNotice]);
 
   React.useEffect(() => {
     stageIdsRef.current = stageIds;
@@ -468,6 +557,44 @@ function App() {
     });
   }, []);
 
+  const updateSlotTitle = React.useCallback((slotId: string, title: string) => {
+    setGroupRef.current((currentGroup) => {
+      const currentSlot = currentGroup.slots.find((slot) => slot.id === slotId);
+
+      if (currentSlot?.title === title) {
+        return currentGroup;
+      }
+
+      return {
+        ...currentGroup,
+        slots: currentGroup.slots.map((currentSlot) => (currentSlot.id === slotId ? { ...currentSlot, title } : currentSlot)),
+      };
+    });
+  }, []);
+
+  const refreshGeminiSlotTitle = React.useCallback(
+    (slotId: string, webview: TrackedProviderWebview) => {
+      if (typeof webview.executeJavaScript !== 'function') {
+        return;
+      }
+
+      const executeJavaScript = webview.executeJavaScript.bind(webview);
+
+      window.setTimeout(() => {
+        void executeJavaScript<unknown>(createGeminiTitleScript())
+          .then((title) => {
+            if (typeof title === 'string' && isMeaningfulGeminiTitle(title)) {
+              updateSlotTitle(slotId, title.trim());
+            }
+          })
+          .catch((error: unknown) => {
+            console.warn('Failed to read Gemini conversation title', error);
+          });
+      }, 500);
+    },
+    [updateSlotTitle],
+  );
+
   const attachNavigationTracker = React.useCallback(
     (slot: Slot) => (webview: TrackedProviderWebview | null) => {
       const { id: slotId, providerId } = slot;
@@ -506,17 +633,30 @@ function App() {
           }
 
           updateSlotNavigationState(slotId);
+
+          if (providerId === 'gemini') {
+            refreshGeminiSlotTitle(slotId, webview);
+          }
         };
 
         webview.addEventListener('did-navigate', saveCurrentUrl);
         webview.addEventListener('did-navigate-in-page', saveCurrentUrl);
-        webview.addEventListener('did-finish-load', () => updateSlotNavigationState(slotId));
+        webview.addEventListener('did-finish-load', () => {
+          updateSlotNavigationState(slotId);
+
+          if (providerId === 'gemini') {
+            refreshGeminiSlotTitle(slotId, webview);
+          }
+        });
         webview.addEventListener('page-title-updated', (event: Event & { title?: string }) => {
           const title = typeof event.title === 'string' && event.title.trim() ? event.title.trim() : getProviderConfig(providerId).label;
-          setGroupRef.current((currentGroup) => ({
-            ...currentGroup,
-            slots: currentGroup.slots.map((currentSlot) => (currentSlot.id === slotId ? { ...currentSlot, title } : currentSlot)),
-          }));
+
+          if (providerId === 'gemini' && !isMeaningfulGeminiTitle(title)) {
+            refreshGeminiSlotTitle(slotId, webview);
+            return;
+          }
+
+          updateSlotTitle(slotId, title);
         });
         webview.addEventListener('did-fail-load', (event: WebviewNavigationEvent) => {
           if (event.isMainFrame === false || event.errorCode === -3) {
@@ -558,7 +698,7 @@ function App() {
         webview.dataset.omniMemoSlot = slotId;
       }
     },
-    [updateSlotNavigationState],
+    [refreshGeminiSlotTitle, updateSlotNavigationState, updateSlotTitle],
   );
 
   const getSlotWebviewRef = React.useCallback(
@@ -1237,6 +1377,12 @@ function App() {
     setSidebarView(view);
     setMemoPanelOpen(false);
     setSettingsMenuOpen(false);
+
+    if (view === 'workspace-panel') {
+      setWorkspaceRecords(listWorkspaces());
+      setWorkspacePanelNotice('');
+      setExpandedWorkspaceId(null);
+    }
   }, []);
 
   const handleMemoPanelSelect = React.useCallback(() => {
@@ -1255,6 +1401,9 @@ function App() {
     stageIdsRef.current = tab.group.stageIds;
     dockIdsRef.current = tab.group.dockIds;
     setMaximizedSlotId(null);
+    setSidebarView(null);
+    setMemoPanelOpen(false);
+    setSettingsMenuOpen(false);
   }, []);
 
   const cleanupTabSlotState = React.useCallback((slotIds: string[]) => {
@@ -1360,6 +1509,7 @@ function App() {
           };
         }),
       );
+      setWorkspaceRecords(listWorkspaces());
       closeWorkspacePromotion();
     },
     [activeTab, activeTabId, closeWorkspacePromotion, workspacePromotionName],
@@ -1431,6 +1581,231 @@ function App() {
       return nextTabs;
     });
   }, [cleanupTabSlotState]);
+
+  const refreshWorkspaceRecords = React.useCallback(() => {
+    setWorkspaceRecords(listWorkspaces());
+  }, []);
+
+  const closeWorkspacePanel = React.useCallback(() => {
+    setSidebarView(null);
+    setMemoPanelOpen(false);
+    setSettingsMenuOpen(false);
+    setMaximizedSlotId(null);
+  }, []);
+
+  const openWorkspaceTab = React.useCallback(
+    (workspace: WorkspaceRecord) => {
+      const openTab = tabs.find((tab) => tab.kind === 'workspace' && tab.workspaceId === workspace.id);
+
+      if (openTab) {
+        setWorkspacePanelNotice('');
+        activateTab(openTab);
+        closeWorkspacePanel();
+        return;
+      }
+
+      if (tabs.length >= MAX_TABS) {
+        setWorkspacePanelNotice('상단탭이 꽉 찼습니다.');
+        return;
+      }
+
+      const newTab = createWorkspaceTab(workspace);
+      let wasAdded = false;
+
+      flushSync(() => {
+        setTabs((currentTabs) => {
+          if (currentTabs.length >= MAX_TABS) {
+            return currentTabs;
+          }
+
+          wasAdded = true;
+          return [...currentTabs, newTab];
+        });
+      });
+
+      if (!wasAdded) {
+        setWorkspacePanelNotice('상단탭이 꽉 찼습니다.');
+        return;
+      }
+
+      setNavigationStates((current) => ({
+        ...current,
+        ...createInitialNavigationStates(newTab.group.slots),
+      }));
+      setBroadcastStatuses((current) => ({
+        ...current,
+        ...createInitialBroadcastStatuses(newTab.group.slots),
+      }));
+      setWorkspacePanelNotice('');
+      activateTab(newTab);
+      closeWorkspacePanel();
+    },
+    [activateTab, closeWorkspacePanel, tabs],
+  );
+
+  const openWorkspaceCreate = React.useCallback(() => {
+    setWorkspaceCreateName('');
+    setWorkspaceCreateError('');
+    setWorkspaceCreateOpen(true);
+  }, []);
+
+  const closeWorkspaceCreate = React.useCallback(() => {
+    setWorkspaceCreateOpen(false);
+    setWorkspaceCreateName('');
+    setWorkspaceCreateError('');
+  }, []);
+
+  const confirmWorkspaceCreate = React.useCallback(
+    (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      const name = workspaceCreateName.trim();
+
+      if (!name) {
+        setWorkspaceCreateError('워크스테이션 이름을 입력하세요.');
+        return;
+      }
+
+      if (!canCreateWorkspace()) {
+        setWorkspaceCreateError('워크스테이션은 최대 8개까지 저장할 수 있습니다.');
+        return;
+      }
+
+      if (tabs.length >= MAX_TABS) {
+        setWorkspaceCreateError('열 수 있는 탭 개수를 초과했습니다.');
+        return;
+      }
+
+      const blankGroup = createBlankGroup();
+      let workspace: WorkspaceRecord;
+
+      try {
+        workspace = createWorkspace(name, {
+          slots: blankGroup.slots,
+          stageIds: blankGroup.stageIds,
+          dockIds: blankGroup.dockIds,
+          layoutMode: blankGroup.layoutMode,
+          dockMinimized: blankGroup.dockMinimized,
+        });
+      } catch {
+        setWorkspaceCreateError('워크스테이션을 만들 수 없습니다.');
+        return;
+      }
+
+      const newTab = createWorkspaceTab(workspace);
+      let wasAdded = false;
+
+      flushSync(() => {
+        setTabs((currentTabs) => {
+          if (currentTabs.length >= MAX_TABS) {
+            return currentTabs;
+          }
+
+          wasAdded = true;
+          return [...currentTabs, newTab];
+        });
+      });
+
+      if (!wasAdded) {
+        setWorkspaceCreateError('상단탭이 꽉 찼습니다.');
+        return;
+      }
+
+      setNavigationStates((current) => ({
+        ...current,
+        ...createInitialNavigationStates(newTab.group.slots),
+      }));
+      setBroadcastStatuses((current) => ({
+        ...current,
+        ...createInitialBroadcastStatuses(newTab.group.slots),
+      }));
+      refreshWorkspaceRecords();
+      activateTab(newTab);
+      closeWorkspaceCreate();
+      closeWorkspacePanel();
+    },
+    [activateTab, closeWorkspaceCreate, closeWorkspacePanel, refreshWorkspaceRecords, tabs.length, workspaceCreateName],
+  );
+
+  const openWorkspaceRename = React.useCallback((workspace: WorkspaceRecord) => {
+    setWorkspaceRenameTarget(workspace);
+    setWorkspaceRenameName(workspace.name);
+    setWorkspaceRenameError('');
+  }, []);
+
+  const closeWorkspaceRename = React.useCallback(() => {
+    setWorkspaceRenameTarget(null);
+    setWorkspaceRenameName('');
+    setWorkspaceRenameError('');
+  }, []);
+
+  const confirmWorkspaceRename = React.useCallback(
+    (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      if (!workspaceRenameTarget) {
+        return;
+      }
+
+      const name = workspaceRenameName.trim();
+
+      if (!name) {
+        setWorkspaceRenameError('워크스테이션 이름을 입력하세요.');
+        return;
+      }
+
+      const renamedWorkspace = renameWorkspace(workspaceRenameTarget.id, name);
+
+      if (!renamedWorkspace) {
+        setWorkspaceRenameError('워크스테이션 이름을 바꿀 수 없습니다.');
+        return;
+      }
+
+      setTabs((currentTabs) =>
+        currentTabs.map((tab) =>
+          tab.kind === 'workspace' && tab.workspaceId === renamedWorkspace.id ? { ...tab, title: renamedWorkspace.name } : tab,
+        ),
+      );
+      refreshWorkspaceRecords();
+      closeWorkspaceRename();
+    },
+    [closeWorkspaceRename, refreshWorkspaceRecords, workspaceRenameName, workspaceRenameTarget],
+  );
+
+  const handleWorkspaceDelete = React.useCallback(
+    (workspace: WorkspaceRecord) => {
+      const shouldDelete = window.confirm(`"${workspace.name}" 워크스테이션을 삭제할까요?`);
+
+      if (!shouldDelete) {
+        return;
+      }
+
+      deleteWorkspace(workspace.id);
+      refreshWorkspaceRecords();
+
+      const openTab = tabs.find((tab) => tab.kind === 'workspace' && tab.workspaceId === workspace.id);
+
+      if (!openTab) {
+        return;
+      }
+
+      if (tabs.length > 1) {
+        closeTab(openTab.id);
+        return;
+      }
+
+      cleanupTabSlotState(openTab.group.slots.map((slot) => slot.id));
+
+      const blankGroup = createBlankGroup();
+      const replacementTab = createGroupTab(blankGroup);
+
+      setTabs([replacementTab]);
+      setNavigationStates(createInitialNavigationStates(blankGroup.slots));
+      setBroadcastStatuses(createInitialBroadcastStatuses(blankGroup.slots));
+      activateTab(replacementTab);
+    },
+    [activateTab, cleanupTabSlotState, closeTab, refreshWorkspaceRecords, tabs],
+  );
 
   const handleReturnToStage = React.useCallback(() => {
     setSidebarView(null);
@@ -1709,12 +2084,13 @@ function App() {
   }, []);
 
   const sidebarPlaceholderTitle =
-    sidebarView === 'workspace-panel'
-      ? '워크스페이스 관리 - 준비 중'
-      : sidebarView === 'prompt-library'
+    sidebarView === 'prompt-library'
         ? '프롬프트 라이브러리 - 준비 중'
         : '';
-  const sidebarPlaceholderOpen = sidebarView !== null && !memoPanelOpen;
+  const workspacePanelOpen = sidebarView === 'workspace-panel' && !memoPanelOpen;
+  const sidebarPlaceholderOpen = sidebarView === 'prompt-library' && !memoPanelOpen;
+  const sidebarPageOpen = workspacePanelOpen || sidebarPlaceholderOpen;
+  const openedWorkspaceIds = new Set(tabs.flatMap((tab) => (tab.kind === 'workspace' ? [tab.workspaceId] : [])));
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -1865,6 +2241,120 @@ function App() {
           </div>
         )}
 
+        {workspacePanelOpen && (
+          <section className="workspace-panel-page" aria-label="워크스테이션 목록">
+            <div className="workspace-panel-header">
+              <button className="page-back-button" type="button" aria-label="Stage로 돌아가기" title="Stage로 돌아가기" onClick={handleReturnToStage}>
+                ←
+              </button>
+              <div>
+                <h2>워크스테이션</h2>
+                <p>{workspaceRecords.length}개 저장됨</p>
+              </div>
+            </div>
+
+            {workspacePanelNotice && (
+              <div className="workspace-panel-notice" role="status">
+                <span>{workspacePanelNotice}</span>
+                <button type="button" onClick={() => setWorkspacePanelNotice('')}>
+                  닫기
+                </button>
+              </div>
+            )}
+
+            {canCreateWorkspace() && (
+              <button className="workspace-create-card" type="button" onClick={openWorkspaceCreate}>
+                <span className="workspace-create-icon" aria-hidden="true">
+                  +
+                </span>
+                <span>
+                  <span className="workspace-create-title">새 워크스테이션 만들기</span>
+                  <span className="workspace-create-description">기본 3개 슬롯으로 새 작업 공간을 시작합니다.</span>
+                </span>
+              </button>
+            )}
+
+            {workspaceRecords.length === 0 ? (
+              <div className="workspace-empty">아직 저장된 워크스테이션이 없습니다.</div>
+            ) : (
+              <div className="workspace-record-list">
+                {workspaceRecords.map((workspace) => {
+                  const isOpen = openedWorkspaceIds.has(workspace.id);
+                  const isActive = activeTab.kind === 'workspace' && activeTab.workspaceId === workspace.id;
+                  const isExpanded = expandedWorkspaceId === workspace.id;
+                  const workspaceSlotsById = new Map(workspace.slots.map((slot) => [slot.id, slot]));
+                  const workspaceStageSlots = workspace.stageIds.map((slotId) => workspaceSlotsById.get(slotId)).filter(Boolean) as Slot[];
+                  const workspaceDockSlots = workspace.dockIds.map((slotId) => workspaceSlotsById.get(slotId)).filter(Boolean) as Slot[];
+                  const renderWorkspacePreviewSlots = (previewSlots: Slot[]) =>
+                    previewSlots.length > 0 ? (
+                      <div className="workspace-preview-chip-list">
+                        {previewSlots.map((slot) => {
+                          const provider = getProviderConfig(slot.providerId);
+
+                          return (
+                            <span key={slot.id} className="workspace-preview-chip">
+                              <ProviderIcon providerId={slot.providerId} label={provider.label} />
+                              <span className="workspace-preview-chip-text">
+                                <span className="workspace-preview-provider">{provider.label}</span>
+                                <span className="workspace-preview-title">{slot.title}</span>
+                              </span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="workspace-preview-empty">비어 있음</div>
+                    );
+
+                  return (
+                    <article key={workspace.id} className={`workspace-record-card ${isActive ? 'active' : ''} ${isExpanded ? 'expanded' : ''}`}>
+                      <div className="workspace-record-summary">
+                      <button
+                        className="workspace-record-main"
+                        type="button"
+                        aria-expanded={isExpanded}
+                        onClick={() => setExpandedWorkspaceId((currentId) => (currentId === workspace.id ? null : workspace.id))}
+                      >
+                        <span className="workspace-record-name">{workspace.name}</span>
+                        <span className="workspace-record-meta">
+                          {workspace.slots.length} slots · {isActive ? '현재 탭' : isOpen ? '열려 있음' : '저장됨'}
+                        </span>
+                      </button>
+                      <div className="workspace-record-actions">
+                        <button className="workspace-record-action" type="button" onClick={() => openWorkspaceRename(workspace)}>
+                          이름 수정
+                        </button>
+                        <button className="workspace-record-action danger" type="button" onClick={() => handleWorkspaceDelete(workspace)}>
+                          삭제
+                        </button>
+                      </div>
+                      </div>
+                      {isExpanded && (
+                        <div className="workspace-record-preview">
+                          <div className="workspace-preview-toolbar">
+                            <span className="workspace-preview-title-main">구성 미리보기</span>
+                            <button className="workspace-open-button" type="button" onClick={() => openWorkspaceTab(workspace)}>
+                              이동
+                            </button>
+                          </div>
+                          <div className="workspace-preview-section">
+                            <div className="workspace-preview-section-title">Stage</div>
+                            {renderWorkspacePreviewSlots(workspaceStageSlots)}
+                          </div>
+                          <div className="workspace-preview-section">
+                            <div className="workspace-preview-section-title">Dock</div>
+                            {renderWorkspacePreviewSlots(workspaceDockSlots)}
+                          </div>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
         {sidebarPlaceholderOpen && (
           <section className="sidebar-placeholder-page" aria-label={sidebarPlaceholderTitle}>
             <div className="sidebar-placeholder-inner">
@@ -1877,9 +2367,9 @@ function App() {
         )}
 
         <section
-          className={`webview-panel ${memoPanelOpen || sidebarPlaceholderOpen ? 'view-hidden' : ''}`}
+          className={`webview-panel ${memoPanelOpen || sidebarPageOpen ? 'view-hidden' : ''}`}
           aria-label="Claude, ChatGPT, and Gemini webviews"
-          aria-hidden={memoPanelOpen || sidebarPlaceholderOpen}
+          aria-hidden={memoPanelOpen || sidebarPageOpen}
           onDragOver={handleStageContainerDragOver}
           onDrop={handleStageContainerDrop}
         >
@@ -1982,7 +2472,7 @@ function App() {
           )}
         </section>
 
-        <div className={`workspace-bottom ${memoPanelOpen || sidebarPlaceholderOpen ? 'view-hidden' : ''}`}>
+        <div className={`workspace-bottom ${memoPanelOpen || sidebarPageOpen ? 'view-hidden' : ''}`}>
           <div className="dock-row">
             {broadcastCollapsed && (
               <button
@@ -2223,6 +2713,104 @@ function App() {
                   워크스페이스 - 준비 중
                 </div>
               )}
+            </section>
+          </div>
+        )}
+
+        {workspaceCreateOpen && (
+          <div className="workspace-promotion-backdrop" role="presentation" onMouseDown={closeWorkspaceCreate}>
+            <section
+              className="workspace-promotion-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="workspace-create-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <form onSubmit={confirmWorkspaceCreate}>
+                <header className="workspace-promotion-header">
+                  <h2 id="workspace-create-title">새 워크스테이션</h2>
+                  <button className="workspace-promotion-close" type="button" aria-label="Close" onClick={closeWorkspaceCreate}>
+                    x
+                  </button>
+                </header>
+                <div className="workspace-promotion-body">
+                  <label className="workspace-promotion-label" htmlFor="workspace-create-name">
+                    이름
+                  </label>
+                  <input
+                    id="workspace-create-name"
+                    className="workspace-promotion-input"
+                    value={workspaceCreateName}
+                    autoFocus
+                    onChange={(event) => {
+                      setWorkspaceCreateName(event.target.value);
+                      setWorkspaceCreateError('');
+                    }}
+                  />
+                  {workspaceCreateError && (
+                    <div className="workspace-promotion-error" role="alert">
+                      {workspaceCreateError}
+                    </div>
+                  )}
+                </div>
+                <footer className="workspace-promotion-footer">
+                  <button className="workspace-promotion-secondary" type="button" onClick={closeWorkspaceCreate}>
+                    취소
+                  </button>
+                  <button className="workspace-promotion-primary" type="submit">
+                    만들기
+                  </button>
+                </footer>
+              </form>
+            </section>
+          </div>
+        )}
+
+        {workspaceRenameTarget && (
+          <div className="workspace-promotion-backdrop" role="presentation" onMouseDown={closeWorkspaceRename}>
+            <section
+              className="workspace-promotion-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="workspace-rename-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <form onSubmit={confirmWorkspaceRename}>
+                <header className="workspace-promotion-header">
+                  <h2 id="workspace-rename-title">이름 수정</h2>
+                  <button className="workspace-promotion-close" type="button" aria-label="Close" onClick={closeWorkspaceRename}>
+                    x
+                  </button>
+                </header>
+                <div className="workspace-promotion-body">
+                  <label className="workspace-promotion-label" htmlFor="workspace-rename-name">
+                    이름
+                  </label>
+                  <input
+                    id="workspace-rename-name"
+                    className="workspace-promotion-input"
+                    value={workspaceRenameName}
+                    autoFocus
+                    onChange={(event) => {
+                      setWorkspaceRenameName(event.target.value);
+                      setWorkspaceRenameError('');
+                    }}
+                  />
+                  {workspaceRenameError && (
+                    <div className="workspace-promotion-error" role="alert">
+                      {workspaceRenameError}
+                    </div>
+                  )}
+                </div>
+                <footer className="workspace-promotion-footer">
+                  <button className="workspace-promotion-secondary" type="button" onClick={closeWorkspaceRename}>
+                    취소
+                  </button>
+                  <button className="workspace-promotion-primary" type="submit">
+                    저장
+                  </button>
+                </footer>
+              </form>
             </section>
           </div>
         )}
