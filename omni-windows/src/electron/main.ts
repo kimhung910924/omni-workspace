@@ -60,6 +60,27 @@ app.whenReady().then(() => {
     contents.on('will-attach-webview', (_attachEvent, webPreferences) => {
       webPreferences.preload = WEBVIEW_CAPTURE_PRELOAD_PATH;
     });
+
+    if (contents.getType() === 'webview') {
+      contents.setWindowOpenHandler(() => ({
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 520,
+          height: 720,
+          minWidth: 420,
+          minHeight: 560,
+          autoHideMenuBar: true,
+          parent: BrowserWindow.fromWebContents(contents) ?? undefined,
+          modal: false,
+          webPreferences: {
+            session: contents.session,
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+          },
+        },
+      }));
+    }
   });
   createMainWindow();
 
