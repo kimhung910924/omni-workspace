@@ -12,8 +12,10 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
+    "i18next": "^26.3.3",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "react-i18next": "^17.0.8"
   },
   "devDependencies": {
     "@types/node": "latest",

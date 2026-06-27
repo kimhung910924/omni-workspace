@@ -1,6 +1,7 @@
 import React from 'react';
 import { flushSync } from 'react-dom';
 import ReactDOM from 'react-dom/client';
+import { useTranslation } from 'react-i18next';
 import './styles.css';
 import { ProviderIcon } from './ProviderIcon';
 import { SlotHeader } from './SlotHeader';
@@ -8,6 +9,7 @@ import { providerAdapters, type ProviderWebview, type SendResult } from './provi
 import { getInitialProviderUrl, isRestorableUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
 import { createMemo, loadMemos, saveMemos } from './features/memos/memoStore';
 import type { Group } from './groupStore';
+import { getCurrentLanguage, initI18n, saveLanguagePreference, type SupportedLanguage } from './i18n';
 import { canCreateWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace, updateWorkspace } from './workspaceStore';
 import type { Memo } from './features/memos/types';
 import type { Slot, WorkspaceRecord } from './types';
@@ -325,6 +327,7 @@ function getInitialActiveSlotId(group: Group): string {
 }
 
 function App() {
+  const { t, i18n } = useTranslation();
   const [tabs, setTabs] = React.useState<Tab[]>(() => [createGroupTab(createBlankGroup())]);
   const [activeTabId, setActiveTabId] = React.useState<string>(() => tabs[0]?.id ?? '');
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]!;
@@ -395,6 +398,15 @@ function App() {
       gridTemplateColumns: isStageGrid ? 'repeat(2, minmax(0, 1fr))' : `repeat(${Math.max(stageIds.length, 1)}, minmax(0, 1fr))`,
     }),
     [isStageGrid, stageIds.length],
+  );
+  const selectedLanguage = getCurrentLanguage();
+  const handleLanguageChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLSelectElement>) => {
+      const nextLanguage = event.target.value as SupportedLanguage;
+      saveLanguagePreference(nextLanguage);
+      void i18n.changeLanguage(nextLanguage);
+    },
+    [i18n],
   );
 
   const setGroup = React.useCallback((updater: Group | ((currentGroup: Group) => Group)) => {
@@ -2225,8 +2237,16 @@ function App() {
         </nav>
         <div className="sidebar-account">
           {settingsMenuOpen && (
-            <div className="settings-popover" role="status">
-              설정 - 준비 중
+            <div className="settings-popover" role="dialog" aria-label={t('settings.title')}>
+              <h2 className="settings-popover-title">{t('settings.title')}</h2>
+              <label className="settings-field" htmlFor="settings-language">
+                <span className="settings-field-label">{t('settings.language')}</span>
+                <select id="settings-language" className="settings-select" value={selectedLanguage} onChange={handleLanguageChange}>
+                  <option value="ko">{t('settings.korean')}</option>
+                  <option value="en">{t('settings.english')}</option>
+                </select>
+              </label>
+              <p className="settings-hint">{t('settings.languageHint')}</p>
             </div>
           )}
           <button
@@ -3151,8 +3171,10 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+initI18n().then(() => {
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );
+});

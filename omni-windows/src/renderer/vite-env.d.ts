@@ -8,5 +8,6 @@ interface Window {
     grokPartition: string;
     perplexityPartition: string;
     getWebviewCapturePreloadUrl: () => Promise<string>;
+    getAppLocale: () => Promise<string>;
   };
 }

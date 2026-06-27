@@ -56,6 +56,7 @@ app.whenReady().then(() => {
   // Configure persistent provider sessions before any webContents are created.
   configureProviderUserAgents();
   ipcMain.handle('omni:get-webview-capture-preload-url', () => WEBVIEW_CAPTURE_PRELOAD_URL);
+  ipcMain.handle('omni:get-app-locale', () => app.getLocale());
   app.on('web-contents-created', (_event, contents) => {
     contents.on('will-attach-webview', (_attachEvent, webPreferences) => {
       webPreferences.preload = WEBVIEW_CAPTURE_PRELOAD_PATH;
