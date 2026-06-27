@@ -77,6 +77,7 @@ type StagePointerDrag = {
 const MAX_SLOTS = 8;
 const MAX_STAGE_SLOTS = 4;
 const MAX_TABS = 4; // TODO: Replace with free/pro tier limits.
+const MAX_TABS_NOTICE = '상단탭이 꽉 찼습니다. 상단탭 자리 확보 후 다시 시도해주세요.';
 const DEFAULT_STARTUP_PROVIDER_IDS: ProviderId[] = ['claude', 'chatgpt', 'gemini'];
 
 const PROVIDERS: Array<{
@@ -380,6 +381,8 @@ function App() {
   const dockIdsRef = React.useRef(dockIds);
   const activeSlotIdRef = React.useRef(activeSlotId);
   const draggingSlotIdRef = React.useRef<string | null>(null);
+  const workspaceCreateInputRef = React.useRef<HTMLInputElement | null>(null);
+  const workspaceRenameInputRef = React.useRef<HTMLInputElement | null>(null);
   const [draggingSlotId, setDraggingSlotId] = React.useState<string | null>(null);
   const slotsById = React.useMemo(() => new Map(slots.map((slot) => [slot.id, slot])), [slots]);
   const stageSlots = React.useMemo(() => stageIds.map((slotId) => slotsById.get(slotId)).filter(Boolean) as Slot[], [slotsById, stageIds]);
@@ -421,6 +424,34 @@ function App() {
       setWorkspacePanelNotice('');
     }
   }, [tabs.length, workspacePanelNotice]);
+
+  React.useEffect(() => {
+    if (!workspaceCreateOpen) {
+      return;
+    }
+
+    workspaceCreateInputRef.current?.focus();
+    const focusTimer = window.setTimeout(() => {
+      workspaceCreateInputRef.current?.focus();
+    }, 50);
+
+    return () => window.clearTimeout(focusTimer);
+  }, [workspaceCreateOpen]);
+
+  React.useEffect(() => {
+    if (!workspaceRenameTarget) {
+      return;
+    }
+
+    workspaceRenameInputRef.current?.focus();
+    workspaceRenameInputRef.current?.select();
+    const focusTimer = window.setTimeout(() => {
+      workspaceRenameInputRef.current?.focus();
+      workspaceRenameInputRef.current?.select();
+    }, 50);
+
+    return () => window.clearTimeout(focusTimer);
+  }, [workspaceRenameTarget]);
 
   React.useEffect(() => {
     stageIdsRef.current = stageIds;
@@ -1523,7 +1554,7 @@ function App() {
 
   const handleCreateGroupTab = React.useCallback(() => {
     if (tabs.length >= MAX_TABS) {
-      setNavigationNotice('상단탭이 꽉 찼습니다.');
+      setNavigationNotice(MAX_TABS_NOTICE);
       return;
     }
 
@@ -1543,7 +1574,7 @@ function App() {
     });
 
     if (!wasAdded) {
-      setNavigationNotice('상단탭이 꽉 찼습니다.');
+      setNavigationNotice(MAX_TABS_NOTICE);
       return;
     }
 
@@ -1637,7 +1668,7 @@ function App() {
       }
 
       if (tabs.length >= MAX_TABS) {
-        setWorkspacePanelNotice('상단탭이 꽉 찼습니다.');
+        setWorkspacePanelNotice(MAX_TABS_NOTICE);
         return;
       }
 
@@ -1656,7 +1687,7 @@ function App() {
       });
 
       if (!wasAdded) {
-        setWorkspacePanelNotice('상단탭이 꽉 찼습니다.');
+        setWorkspacePanelNotice(MAX_TABS_NOTICE);
         return;
       }
 
@@ -1676,10 +1707,16 @@ function App() {
   );
 
   const openWorkspaceCreate = React.useCallback(() => {
+    if (tabs.length >= MAX_TABS) {
+      setWorkspacePanelNotice(MAX_TABS_NOTICE);
+      closeNewTabModal();
+      return;
+    }
+
     setWorkspaceCreateName('');
     setWorkspaceCreateError('');
     setWorkspaceCreateOpen(true);
-  }, []);
+  }, [closeNewTabModal, tabs.length]);
 
   const closeWorkspaceCreate = React.useCallback(() => {
     setWorkspaceCreateOpen(false);
@@ -1704,7 +1741,7 @@ function App() {
       }
 
       if (tabs.length >= MAX_TABS) {
-        setWorkspaceCreateError('상단탭이 꽉 찼습니다.');
+        setWorkspaceCreateError(MAX_TABS_NOTICE);
         return;
       }
 
@@ -1739,7 +1776,7 @@ function App() {
       });
 
       if (!wasAdded) {
-        setWorkspaceCreateError('상단탭이 꽉 찼습니다.');
+        setWorkspaceCreateError(MAX_TABS_NOTICE);
         return;
       }
 
@@ -2341,23 +2378,60 @@ function App() {
 
                   return (
                     <article key={workspace.id} className={`workspace-record-card ${isActive ? 'active' : ''} ${isExpanded ? 'expanded' : ''}`}>
-                      <div className="workspace-record-summary">
-                      <button
-                        className="workspace-record-main"
-                        type="button"
+                      <div
+                        className="workspace-record-summary"
+                        role="button"
+                        tabIndex={0}
                         aria-expanded={isExpanded}
                         onClick={() => setExpandedWorkspaceId((currentId) => (currentId === workspace.id ? null : workspace.id))}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            setExpandedWorkspaceId((currentId) => (currentId === workspace.id ? null : workspace.id));
+                          }
+                        }}
                       >
-                        <span className="workspace-record-name">{workspace.name}</span>
-                        <span className="workspace-record-meta">
-                          {workspace.slots.length} slots · {isActive ? '현재 탭' : isOpen ? '열려 있음' : '저장됨'}
-                        </span>
-                      </button>
+                      <div className="workspace-record-primary">
+                        <div className="workspace-record-main">
+                          <span className="workspace-record-title-row">
+                            <span className="workspace-record-name">{workspace.name}</span>
+                            {isExpanded && (
+                              <button
+                                className="workspace-open-button"
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openWorkspaceTab(workspace);
+                                }}
+                              >
+                                이동
+                              </button>
+                            )}
+                          </span>
+                          <span className="workspace-record-meta">
+                            {workspace.slots.length} slots · {isActive ? '현재 탭' : isOpen ? '열려 있음' : '저장됨'}
+                          </span>
+                        </div>
+                      </div>
                       <div className="workspace-record-actions">
-                        <button className="workspace-record-action" type="button" onClick={() => openWorkspaceRename(workspace)}>
+                        <button
+                          className="workspace-record-action"
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openWorkspaceRename(workspace);
+                          }}
+                        >
                           이름 수정
                         </button>
-                        <button className="workspace-record-action danger" type="button" onClick={() => handleWorkspaceDelete(workspace)}>
+                        <button
+                          className="workspace-record-action danger"
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleWorkspaceDelete(workspace);
+                          }}
+                        >
                           삭제
                         </button>
                       </div>
@@ -2366,9 +2440,6 @@ function App() {
                         <div className="workspace-record-preview">
                           <div className="workspace-preview-toolbar">
                             <span className="workspace-preview-title-main">구성 미리보기</span>
-                            <button className="workspace-open-button" type="button" onClick={() => openWorkspaceTab(workspace)}>
-                              이동
-                            </button>
                           </div>
                           <div className="workspace-preview-section">
                             <div className="workspace-preview-section-title">Stage</div>
@@ -2810,6 +2881,8 @@ function App() {
                   </label>
                   <input
                     id="workspace-create-name"
+                    ref={workspaceCreateInputRef}
+                    type="text"
                     className="workspace-promotion-input"
                     value={workspaceCreateName}
                     autoFocus
@@ -2859,6 +2932,8 @@ function App() {
                   </label>
                   <input
                     id="workspace-rename-name"
+                    ref={workspaceRenameInputRef}
+                    type="text"
                     className="workspace-promotion-input"
                     value={workspaceRenameName}
                     autoFocus
