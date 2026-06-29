@@ -5,3 +5,4 @@ dist-electron/
 
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+*.zip

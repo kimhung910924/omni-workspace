@@ -2,6 +2,61 @@
 
 > 날짜 / 작업 / 문제 / 해결 형식으로 정리. 최신이 위로 오게 배치(최신순).
 > 같은 문제를 다시 만났을 때 검색해서 찾아보는 용도.
+## 2026-06-29 — "Claude 고장/워크스테이션 소실"의 진짜 원인 발견 (포트 충돌)
+npm run dev 좀비 프로세스가 5173 포트 점유 → Vite가 5174로 밀림 → Electron은 하드코딩된 5173 계속 로드 시도 → 메인 윈도우/webview 전부 깨짐. lsof -ti:5173 | xargs kill -9로 해결됨. 1차/2차 시도 때 의심했던 groupStore.ts/workspaceStore.ts 코드는 무죄였다는 것도 명시
+
+## 2026-06-28 — 웹슬롯 1단계 2차 시도 실패, 브랜치 폐기 (Claude 로그아웃 원인 미확정)
+
+**작업**
+- 1차 실패(워크스테이션 strict 검증 버그) 반영해서 새 브랜치
+  `feature/web-slot-foundation`에서 재작성. `Slot = AiSlot | WebSlot`
+  discriminated union, `workspaceStore.ts` lenient migration
+  (`normalizeSlot`/`normalizeWorkspaceRecord`), `WEB_SLOT_PARTITION`,
+  `isAiSlot()` 분기, 웹슬롯 추가 모달(URL 입력), favicon/제목 표시까지 구현
+- Codex 보고: typecheck/build 통과
+
+**증상 A — 발견 및 해결**
+- Google Docs 웹슬롯에서 이메일 호버카드 등 내부 subframe 이동 시
+  `contacts.google.com/widget/hovercard/...` URL이 슬롯의 `currentUrl`을
+  덮어써서 빈 화면이 되는 문제
+
+**원인 A**
+- `main.tsx`의 `attachNavigationTracker` 안 `saveCurrentUrl`이
+  `did-navigate`/`did-navigate-in-page`에서 `event.isMainFrame`을 체크하지
+  않고 모든 navigation을 그대로 `currentUrl`에 반영
+
+**해결 A**
+- `saveCurrentUrl` 최상단에 `if (event.isMainFrame === false) { updateSlotNavigationState(slotId); return; }`
+  가드 추가. 코드 검증 + 실사용 확인 완료 — **유효한 해법으로 확정**
+
+**증상 B — 재발, 끝내 미해결**
+- 위 수정 이후 앱을 다시 켜자 기존 워크스테이션이 사이드바에서 또 사라지고
+  Claude 슬롯이 로그아웃 상태로 보임 — 1차 시도와 동일 증상 재발
+
+**원인 B 추적 과정**
+- 1차 가설: `groupStore.ts`의 `isValidSlot`이 `kind` 없는 슬롯을 검증만
+  통과시키고 실제로는 `kind: 'ai'`를 채워 반환하지 않아 `isAiSlot()`이
+  `false`로 판정되고, 그 결과 기존 Claude 슬롯이 `persist:webslot`
+  partition으로 잘못 떴을 것이라는 진단(ChatGPT 진단, Claude 코드 검증으로
+  재확인)
+- 이 가설대로 `groupStore.ts`에 `normalizeSlot`/`normalizeGroup`을 추가해
+  실제로 새 객체에 `kind: 'ai'`를 채워 반환하도록 수정 완료, 코드로 정확성
+  재검증까지 마침
+- **하지만 그 수정 적용 후에도 워크스테이션 소실이 또 재발**
+- 추가 조사 결과: `groupStore.ts`의 `loadGroup()`은 `main.tsx`에서 단 한
+  곳도 호출되지 않는 **죽은 코드**였음 (6/26 워크스테이션 기능 도입 시
+  `loadGroup()` 호출이 이미 제거됨, 앱은 항상 `createBlankGroup()`으로 시작).
+  `workspaceStore.ts`의 `normalizeSlot`은 1차/2차 모두 처음부터 정상이었음
+  (코드로 재확인)
+- **결론: 증상 B의 진짜 원인은 2차 시도에서도 끝내 특정 못함.** 의심했던
+  두 파일(`groupStore.ts`, `workspaceStore.ts`) 모두 원인이 아니었을
+  가능성이 높음 — webview 렌더링 JSX 단계 또는 state 전달 과정의 다른
+  지점일 것으로 추정, 미확정 상태로 다음 시도로 이전
+
+**조치**
+- `feature/web-slot-foundation` 브랜치 작업 전체 폐기, **브랜치 삭제**.
+  커밋 없었음, main 복귀
+- 상세 시행착오 기록은 `docs/IN-PROGRESS.md` 참고
 
 
 ## 2026-06-27 (밤) — 웹슬롯 1단계 1차 시도 실패 (워크스테이션 데이터 소실 버그)
