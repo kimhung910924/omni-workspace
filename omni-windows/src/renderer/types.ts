@@ -1,4 +1,5 @@
 import type { ProviderId } from './providerUrlStore';
+import type { PersistedMeta } from './data/persistedMeta';
 
 export type Slot = {
   id: string;
@@ -28,4 +29,4 @@ export type WorkspaceRecord = {
   dockMinimized: boolean;
   createdAt: string;
   updatedAt: string;
-};
+} & PersistedMeta;

@@ -1,4 +1,5 @@
 import type { ProviderId } from '../../providerUrlStore';
+import type { PersistedMeta } from '../../data/persistedMeta';
 
 export type MemoProvider = ProviderId;
 
@@ -12,7 +13,7 @@ export type Memo = {
   pinned: boolean;
   createdAt: number;
   updatedAt: number;
-};
+} & PersistedMeta;
 
 export type MemoDraft = {
   title?: string;
