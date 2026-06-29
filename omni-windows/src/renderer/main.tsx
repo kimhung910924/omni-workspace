@@ -8,6 +8,7 @@ import { SlotHeader } from './SlotHeader';
 import { providerAdapters, type ProviderWebview, type SendResult } from './providerAdapters';
 import { getInitialProviderUrl, isRestorableUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
 import { createMemo, loadMemos, saveMemos } from './features/memos/memoStore';
+import { useEntitlement } from './entitlement/useEntitlement';
 import { getCurrentLanguage, initI18n, saveLanguagePreference, type SupportedLanguage } from './i18n';
 import { canCreateWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace, updateWorkspace } from './workspaceStore';
 import type { Memo } from './features/memos/types';
@@ -75,9 +76,6 @@ type StagePointerDrag = {
   active: boolean;
 };
 
-const MAX_SLOTS = 8;
-const MAX_STAGE_SLOTS = 4;
-const MAX_TABS = 4; // TODO: Replace with free/pro tier limits.
 const MAX_TABS_NOTICE = '상단탭이 꽉 찼습니다. 상단탭 자리 확보 후 다시 시도해주세요.';
 const DEFAULT_STARTUP_PROVIDER_IDS: ProviderId[] = ['claude', 'chatgpt', 'gemini'];
 
@@ -327,6 +325,7 @@ function getInitialActiveSlotId(group: Group): string {
 
 function App() {
   const { t, i18n } = useTranslation();
+  const { maxTabs: MAX_TABS, maxSlots: MAX_SLOTS, maxStageSlots: MAX_STAGE_SLOTS } = useEntitlement();
   const [tabs, setTabs] = React.useState<Tab[]>(() => [createGroupTab(createBlankGroup())]);
   const [activeTabId, setActiveTabId] = React.useState<string>(() => tabs[0]?.id ?? '');
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]!;

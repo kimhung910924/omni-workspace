@@ -163,6 +163,24 @@ npm run dev
 - 실제 기능에는 무해, 프로덕션 빌드에는 안 보임 → 이후 의도적으로 방치
   결정 (다시 손대지 않기로 함)
 
+**2026-06-29 추가 메모 — 다시 시도한다면 다른 각도로**
+- entitlement 리팩터 작업 중 같은 노이즈(`GUEST_VIEW_MANAGER_CALL ERR_ABORTED
+  (-3)`, claude.ai/gemini.google.com/chatgpt.com 등 전 provider에서 반복)를
+  다시 봄. 이번에도 기능에는 무해, entitlement 작업과는 무관함을 확인
+- 폐기된 `feature/suppress-err-aborted-noise`는 렌더러 쪽 코드
+  (`canGoBack()`/`canGoForward()`)를 try/catch로 감싸는 접근이었는데, 이
+  에러는 Electron의 webview 내부 IPC 브릿지(guest view ↔ 메인 프로세스)
+  레벨에서 navigate/reload 도중 끊기며 발생하는 것으로 추정됨 — 즉 렌더러
+  코드를 감싸는 방식 자체가 발생 지점을 안 건드렸을 가능성이 높음. 같은
+  접근으로 재시도하면 같은 이유로 또 실패할 듯
+- 다음에 다시 도전한다면 아직 안 시도해본 다른 각도: webview의
+  `did-fail-load` 이벤트에서 `errorCode === -3`(ABORTED)인 경우를 필터링해서
+  콘솔에 안 찍히게 하는 방식 (메인 프로세스/electron 레벨 핸들러 쪽 접근,
+  렌더러 쪽이 아님)
+- 우선순위 낮음, 별도 세션에서. 지금 진행 중인 저위험 리팩터(entitlement,
+  repository, memo UI 이동)와는 분리해서 진행할 것 — 같이 묶으면 회귀
+  원인 추적이 헷갈림
+
 ---
 
 ## [경과 불명, 확인 필요] 6/23 오전 — "메모보드 스크롤" 커밋 머지 여부
