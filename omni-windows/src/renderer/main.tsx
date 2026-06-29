@@ -7,10 +7,11 @@ import { ProviderIcon } from './ProviderIcon';
 import { SlotHeader } from './SlotHeader';
 import { providerAdapters, type ProviderWebview, type SendResult } from './providerAdapters';
 import { getInitialProviderUrl, isRestorableUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
-import { createMemo, loadMemos, saveMemos } from './features/memos/memoStore';
+import { createMemo } from './features/memos/memoStore';
+import { memoRepository } from './data/local/localMemoRepository';
 import { useEntitlement } from './entitlement/useEntitlement';
 import { getCurrentLanguage, initI18n, saveLanguagePreference, type SupportedLanguage } from './i18n';
-import { canCreateWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace, updateWorkspace } from './workspaceStore';
+import { workspaceRepository } from './data/local/localWorkspaceRepository';
 import type { Memo } from './features/memos/types';
 import type { Group, Slot, WorkspaceRecord } from './types';
 
@@ -342,7 +343,7 @@ function App() {
   const [workspacePromotionOpen, setWorkspacePromotionOpen] = React.useState(false);
   const [workspacePromotionName, setWorkspacePromotionName] = React.useState('');
   const [workspacePromotionError, setWorkspacePromotionError] = React.useState('');
-  const [workspaceRecords, setWorkspaceRecords] = React.useState<WorkspaceRecord[]>(() => listWorkspaces());
+  const [workspaceRecords, setWorkspaceRecords] = React.useState<WorkspaceRecord[]>(() => workspaceRepository.list());
   const [workspacePanelNotice, setWorkspacePanelNotice] = React.useState('');
   const [expandedWorkspaceId, setExpandedWorkspaceId] = React.useState<string | null>(null);
   const [workspaceCreateOpen, setWorkspaceCreateOpen] = React.useState(false);
@@ -359,7 +360,7 @@ function App() {
   const [editingContent, setEditingContent] = React.useState('');
   const [selectedMemoId, setSelectedMemoId] = React.useState<string | null>(null);
   const [navigationNotice, setNavigationNotice] = React.useState('');
-  const [memos, setMemos] = React.useState<Memo[]>(() => loadMemos());
+  const [memos, setMemos] = React.useState<Memo[]>(() => memoRepository.list());
   const [webviewCapturePreloadUrl, setWebviewCapturePreloadUrl] = React.useState<string | null>(null);
   const [navigationStates, setNavigationStates] = React.useState<Partial<Record<string, NavigationState>>>(() =>
     createInitialNavigationStates(slots),
@@ -422,7 +423,7 @@ function App() {
   const setGroupRef = React.useRef(setGroup);
 
   React.useEffect(() => {
-    saveMemos(memos);
+    memoRepository.save(memos);
   }, [memos]);
 
   React.useEffect(() => {
@@ -1426,7 +1427,7 @@ function App() {
     setSettingsMenuOpen(false);
 
     if (view === 'workspace-panel') {
-      setWorkspaceRecords(listWorkspaces());
+      setWorkspaceRecords(workspaceRepository.list());
       setWorkspacePanelNotice('');
       setExpandedWorkspaceId(null);
     }
@@ -1522,15 +1523,15 @@ function App() {
         return;
       }
 
-      if (!canCreateWorkspace()) {
+      if (!workspaceRepository.canCreate()) {
         setWorkspacePromotionError('You can save up to 8 workstations.');
         return;
       }
 
-      let workspace: ReturnType<typeof createWorkspace>;
+      let workspace: ReturnType<typeof workspaceRepository.create>;
 
       try {
-        workspace = createWorkspace(name, {
+        workspace = workspaceRepository.create(name, {
           slots: activeTab.group.slots,
           stageIds: activeTab.group.stageIds,
           dockIds: activeTab.group.dockIds,
@@ -1556,7 +1557,7 @@ function App() {
           };
         }),
       );
-      setWorkspaceRecords(listWorkspaces());
+      setWorkspaceRecords(workspaceRepository.list());
       closeWorkspacePromotion();
     },
     [activeTab, activeTabId, closeWorkspacePromotion, workspacePromotionName],
@@ -1641,7 +1642,7 @@ function App() {
   }, [cleanupTabSlotState]);
 
   const refreshWorkspaceRecords = React.useCallback(() => {
-    setWorkspaceRecords(listWorkspaces());
+    setWorkspaceRecords(workspaceRepository.list());
   }, []);
 
   React.useEffect(() => {
@@ -1649,7 +1650,7 @@ function App() {
       return;
     }
 
-    updateWorkspace(activeWorkspaceId, {
+    workspaceRepository.update(activeWorkspaceId, {
       slots: activeTab.group.slots,
       stageIds: activeTab.group.stageIds,
       dockIds: activeTab.group.dockIds,
@@ -1745,7 +1746,7 @@ function App() {
         return;
       }
 
-      if (!canCreateWorkspace()) {
+      if (!workspaceRepository.canCreate()) {
         setWorkspaceCreateError('워크스테이션은 최대 8개까지 저장할 수 있습니다.');
         return;
       }
@@ -1759,7 +1760,7 @@ function App() {
       let workspace: WorkspaceRecord;
 
       try {
-        workspace = createWorkspace(name, {
+        workspace = workspaceRepository.create(name, {
           slots: blankGroup.slots,
           stageIds: blankGroup.stageIds,
           dockIds: blankGroup.dockIds,
@@ -1834,7 +1835,7 @@ function App() {
         return;
       }
 
-      const renamedWorkspace = renameWorkspace(workspaceRenameTarget.id, name);
+      const renamedWorkspace = workspaceRepository.rename(workspaceRenameTarget.id, name);
 
       if (!renamedWorkspace) {
         setWorkspaceRenameError('워크스테이션 이름을 바꿀 수 없습니다.');
@@ -1860,7 +1861,7 @@ function App() {
         return;
       }
 
-      deleteWorkspace(workspace.id);
+      workspaceRepository.remove(workspace.id);
       refreshWorkspaceRecords();
 
       const openTab = tabs.find((tab) => tab.kind === 'workspace' && tab.workspaceId === workspace.id);
@@ -2350,7 +2351,7 @@ function App() {
               </div>
             )}
 
-            {canCreateWorkspace() && (
+            {workspaceRepository.canCreate() && (
               <button className="workspace-create-card" type="button" onClick={openWorkspaceCreate}>
                 <span className="workspace-create-icon" aria-hidden="true">
                   +
@@ -2832,7 +2833,7 @@ function App() {
               </div>
               {newTabWorkspaceListOpen && (
                 <div className="new-tab-workspace-list-panel">
-                  {canCreateWorkspace() && (
+                  {workspaceRepository.canCreate() && (
                     <button className="workspace-create-card new-tab-workspace-create-card" type="button" onClick={openWorkspaceCreate}>
                       <span className="workspace-create-icon" aria-hidden="true">
                         +

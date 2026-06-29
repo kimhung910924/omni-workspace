@@ -1,4 +1,5 @@
-import type { LayoutMode, Slot, WorkspaceRecord } from './types';
+import type { LayoutMode, Slot, WorkspaceRecord } from '../../types';
+import type { WorkspaceRepository } from '../repositories';
 
 const STORAGE_KEY = 'omni-workspaces';
 const MAX_WORKSPACES = 8;
@@ -168,3 +169,13 @@ export function deleteWorkspace(id: string): void {
 
   saveWorkspaceRecords(updatedWorkspaces);
 }
+
+export const workspaceRepository: WorkspaceRepository = {
+  list: listWorkspaces,
+  get: getWorkspace,
+  canCreate: canCreateWorkspace,
+  create: createWorkspace,
+  update: updateWorkspace,
+  rename: renameWorkspace,
+  remove: deleteWorkspace,
+};
