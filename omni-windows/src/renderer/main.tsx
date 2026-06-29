@@ -8,11 +8,10 @@ import { SlotHeader } from './SlotHeader';
 import { providerAdapters, type ProviderWebview, type SendResult } from './providerAdapters';
 import { getInitialProviderUrl, isRestorableUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
 import { createMemo, loadMemos, saveMemos } from './features/memos/memoStore';
-import type { Group } from './groupStore';
 import { getCurrentLanguage, initI18n, saveLanguagePreference, type SupportedLanguage } from './i18n';
 import { canCreateWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, renameWorkspace, updateWorkspace } from './workspaceStore';
 import type { Memo } from './features/memos/types';
-import type { Slot, WorkspaceRecord } from './types';
+import type { Group, Slot, WorkspaceRecord } from './types';
 
 type WebviewNavigationEvent = Event & {
   url?: string;

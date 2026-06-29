@@ -9,6 +9,15 @@ export type Slot = {
 
 export type LayoutMode = 'row' | 'grid2x2';
 
+export type Group = {
+  id: string;
+  slots: Slot[];
+  stageIds: string[];
+  dockIds: string[];
+  layoutMode: LayoutMode;
+  dockMinimized: boolean;
+};
+
 export type WorkspaceRecord = {
   id: string;
   name: string;
