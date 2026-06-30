@@ -629,11 +629,6 @@ function App() {
         });
 
         const saveCurrentUrl = (event: WebviewNavigationEvent) => {
-          if (event.isMainFrame === false) {
-            updateSlotNavigationState(slotId);
-            return;
-          }
-
           const navigatedUrl = event.url ?? webview.getURL?.();
 
           if (navigatedUrl) {
