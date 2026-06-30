@@ -6,6 +6,99 @@
 
 ---
 
+## [막힘, 최우선] Gemini 채팅 클릭/메시지 전송 시 홈 화면으로 튕기는 문제 — 1차 진단 기각됨
+
+**증상**
+- Gemini 로그인은 정상, 브로드캐스트로 메시지 전송도 정상 들어감
+- 단, 메시지를 보내거나 채팅 기록에서 기존 대화를 클릭하면 곧바로 홈
+  화면으로 돌아감. Gem(프로젝트)에 속한 대화를 클릭하면 "삭제된 젬으로 한
+  채팅입니다"라며 젬 채팅 목록으로 돌아감
+- 같은 계정으로 일반 Chrome 브라우저에서는 정상 동작 — 즉 Gemini 서비스
+  자체 문제가 아니라 우리 앱(Electron webview) 환경에서만 발생
+
+**1차 진단 (기각됨)**
+- `saveCurrentUrl`(did-navigate/did-navigate-in-page 핸들러)이
+  `event.isMainFrame`을 체크하지 않고 모든 navigation을 `slot.currentUrl`에
+  반영하는 게 원인이라고 진단. Gemini는 동일 도메인(gemini.google.com)
+  서브프레임이 많아서, 서브프레임 navigate가 메인 채팅 URL을 덮어쓰고
+  `<webview src={slot.currentUrl}>`가 그 잘못된 URL로 강제 리로드된다는
+  메커니즘
+- 이 진단은 6/28 웹슬롯 2단계 2차 시도 때 "증상 A"로 이미 한 번
+  발견·수정·검증됐던 것과 동일했음 (그 브랜치 자체는 다른 이유로 전체
+  폐기되어 main에 미반영 상태였음). 그래서 검증된 해법을 단독 재적용하는
+  것으로 보고 진행함
+- `isMainFrame === false` 가드를 `fix/gemini-subframe-navigation-bounce`
+  브랜치에서 작업, 커밋 `6e46cf5`로 main에 머지
+- **재현 테스트: 머지 후에도 증상 동일하게 재현됨**
+- **대조 실험: `git revert 6e46cf5`로 가드를 제거한 뒤에도 증상 동일하게
+  재현됨**
+- 결론: 가드 추가 여부와 무관하게 증상이 그대로 발생 → `isMainFrame` 미체크는
+  원인이 아니거나, 있다 해도 전체 원인의 일부에 불과함. **1차 진단은
+  기각.** 현재 main은 가드가 제거된 상태(추가 커밋 + revert 커밋이 히스토리에
+  남아있고, 코드 동작은 가드 추가 이전과 동일)
+
+**주의 — 잘못된 신호였던 것**
+- 작업 중간에 "껐다 켰더니 정상 작동한다"고 확인됐던 적이 있었음. 이건
+  실제로 고쳐진 게 아니라 일시적으로 우연히 증상이 안 나타난 것이었을
+  가능성이 높음. 6/29 포트 충돌 사례("껐다 켰더니 됨")처럼, "재시작하면
+  된다"가 항상 근본 해결을 의미하지 않는다는 걸 다시 한번 확인함 — 재시작
+  후 정상 동작 1회만으로 "해결됨"이라 단정하지 말 것
+
+**다음에 시도해볼 것 (아직 미시도)**
+- 파티션 캐시 오염 가능성 점검: 메모리에 있는 "반복 로그인 실패 시 webview가
+  완전히 빈 화면이 되면 해당 provider의 Partitions 폴더 삭제 후 재로그인"
+  해법과 같은 부류일 수 있음. Gemini 파티션만 따로 삭제 후 재로그인해서
+  증상 재현 여부 확인
+- Google webview 감지 불안정성 가능성: Perplexity/Grok OAuth 불안정 사례
+  ("Google의 embedded webview 감지가 고정 차단이 아닌 리스크 기반
+  휴리스틱이라 불안정하게 나타난다")와 같은 부류일 가능성 — 같은 구글
+  생태계라 유사한 불안정성을 겪고 있을 수 있음
+- 증상이 발생하는 정확한 순간에 DevTools 콘솔/네트워크 탭 캡처 — 아직 안 함,
+  401/403 같은 인증 에러나 리다이렉트 응답이 있는지 확인 필요
+- `did-navigate`/`did-navigate-in-page` 외 다른 이벤트(`will-navigate`,
+  `did-redirect-navigation` 등)에서 유사한 문제가 발생하는지 점검
+- `refreshGeminiSlotTitle`의 `executeJavaScript` 실행(제목 텍스트 긁어오는
+  스크립트, 500ms 디바운스)이 부작용으로 navigate를 유발하는지 점검 — 코드
+  검토상 read-only로 보이지만 재확인 필요
+
+**현재 상태**
+- main에는 isMainFrame 가드 커밋과 그 revert 커밋이 모두 남아있음 (코드
+  동작은 가드 추가 이전과 동일, 즉 원래 버그가 있던 상태로 복귀)
+- `fix/gemini-subframe-navigation-bounce` 브랜치는 머지 후 삭제 시도했으나
+  실제 로컬/원격 삭제 여부 미확인 — 다음 정리 작업 때 `git branch -a`로
+  확인하고 안 지워졌으면 정리할 것
+- 재개 조건: 위 미시도 항목 중 하나(특히 콘솔 캡처)로 추가 단서를 확보한
+  뒤에 재진단할 것. 같은 방식(isMainFrame 가드)을 다시 시도하지 말 것 —
+  이미 효과 없음이 대조 실험으로 확인됨
+
+---
+
+## [준비됨, 미실행] GUEST_VIEW_MANAGER_CALL ERR_ABORTED 콘솔 노이즈 억제 — 정제된 지시문 확보
+
+- 이전 시도(`feature/suppress-err-aborted-noise`, `canGoBack`/`canGoForward`
+  try/catch 방식)는 효과 없어서 폐기됨. 원인은 이 에러가 우리 JS
+  코드(catch 블록)가 아니라 Electron/Chromium 내부가 webview guest-view IPC
+  브릿지 실패 시 자체적으로 찍는 콘솔 로그이기 때문으로 추정됨 (grep으로
+  "Unexpected error while loading URL" 문자열이 코드 어디에도 없음을 확인함)
+- 다음 각도로 전역 `console.error`를 가로채는 방식의 지시문을 정제 완료,
+  아직 미실행:
+  - `main.tsx`에 직접 패치하지 않고 `src/renderer/diagnostics/
+    suppressExpectedConsoleNoise.ts`로 분리, `main.tsx`에서 side-effect
+    import로 한 번만 로드
+  - `import.meta.env.DEV`에서만 적용 (프로덕션 빌드에는 영향 없음)
+  - 필터 조건: `'GUEST_VIEW_MANAGER_CALL'` AND (`'ERR_ABORTED'` OR
+    `'(-3)'`) — 스크린샷에 `ERR_ABORTED` 문자열이 없이 `(-3)`만 찍히는
+    줄도 있었기 때문에 OR 조건 추가
+  - Vite HMR로 모듈이 재평가돼도 `console.error`가 중복으로 감싸지지 않게
+    `globalThis` 플래그로 중복 설치 방지
+- 100% 효과 보장은 안 됨 (Electron 내부 로그가 실제 JS `console.error`
+  경로를 타는 경우만 잡힘). 그래도 시도할 가치는 있음 — 남은 현실적
+  접근이 이것뿐
+- 우선순위: 기능 버그가 아니라 DevTools 노이즈라서 Gemini 버그, 웹슬롯보다
+  낮음. 안 되면 오래 붙잡지 말고 보류
+
+---
+
 ## [보류] MemoPanel / MemoDetailModal 분리
 
 - 2026-06-30, 저위험 구조 리팩터(커밋 0~4b)에서 memo 관련 순수 헬퍼
