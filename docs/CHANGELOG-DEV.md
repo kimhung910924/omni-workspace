@@ -3,6 +3,113 @@
 > 날짜 / 작업 / 문제 / 해결 형식으로 정리. 최신이 위로 오게 배치(최신순).
 > 같은 문제를 다시 만났을 때 검색해서 찾아보는 용도.
 
+## 2026-06-30 — Gemini 튕김 버그 근본 수정 (webview src 피드백 루프 + 무한루프 + 탭 전환 URL 유실)
+
+**배경**
+
+`docs/IN-PROGRESS.md`의 "[막힘, 최우선] Gemini 채팅 클릭/메시지 전송 시 홈 화면으로
+튕기는 문제" 항목을 이어서 진행. 핵심 발견은 단일 원인이 아니라 **레이어가 다른
+네 가지 문제가 겹쳐 있었다**는 것.
+
+**진단 1 — webview src 피드백 루프 (확정, 수정 완료)**
+
+`<webview src={slot.currentUrl}>` 구조에서 `did-navigate-in-page`가 `currentUrl`
+state를 갱신할 때마다 React가 `src`를 재할당 → 살아있는 webview가 강제 full
+reload됨. Gemini 딥링크는 fresh reload 시 홈/젬 목록으로 튕기고, Claude/ChatGPT는
+같은 메커니즘이 "깜빡임"으로만 보였음(딥링크가 fresh load에 강해서).
+
+대조 실험(Gemini만 currentUrl 갱신 임시 차단)으로 원인 확정. 수정: 슬롯별 초기
+src를 `initialWebviewSrcBySlotIdRef`(ref)에 마운트 시 1회만 고정(`??=`), 이후
+`currentUrl` state 변경이 살아있는 webview의 `src`에 되먹임되지 않게 함.
+`currentUrl` state는 저장/복원용으로 계속 추적. ref 정리는 `!webview` null 분기,
+`cleanupTabSlotState`, `closeSlot` 3곳에서.
+
+부수 효과: 콘솔의 `GUEST_VIEW_MANAGER_CALL ERR_ABORTED (-3)` 노이즈가 크게 감소
+(강제 reload로 인한 navigation abort 흔적이었던 것으로 추정).
+
+**진단 2 — 탭 전환 시 URL 갱신이 엉뚱한 탭에 적용됨 (확정, 수정 완료)**
+
+`setGroup`이 `activeTabId`를 클로저로 캡처해서 항상 "현재 active한 탭"만
+patch함. Gemini에서 navigate가 발생한 직후 사용자가 다른 탭으로 전환하면, 그
+navigate 이벤트가 처리되는 시점엔 이미 activeTabId가 바뀌어 있어 엉뚱한(또는
+존재하지 않는) 슬롯을 patch 시도 → 원래 탭의 Gemini URL이 영원히 갱신 안 됨.
+
+수정: `attachNavigationTracker`가 `slot`과 함께 `ownerTabId`(그 슬롯이 실제로
+속한 탭 id)를 캡처하도록 시그니처 확장. `saveCurrentUrl`/`updateSlotTitle`이
+`setGroupRef`(activeTabId 의존) 대신 `ownerTabId`를 직접 대상으로 하는 `setTabs`
+호출로 전환.
+
+**진단 3 — ref callback 무한 재생성 루프 (자체 회귀, 발견 즉시 수정)**
+
+진단 2의 ownerTabId 패치 도입 과정에서, `attachNavigationTracker`의 `!webview`
+정리 분기가 `webviewRefCallbacks`/`webviewRefCallbackOwnerTabIdsRef`까지 같이
+지우도록 잘못 구현됨. React가 ref를 `null`로 호출(표준 cleanup)할 때마다 이
+캐시가 지워지고, 다음 렌더에서 owner 비교가 매번 "다르다"고 오판해 콜백을
+새로 생성 → React가 다시 `null`/재attach를 반복하는 무한 루프 발생. 증상은
+Gemini 즉시 튕김 재발 + Claude/ChatGPT/Grok 깜빡임 폭증 + ERR_ABORTED 콘솔
+노이즈 폭증으로 나타남(거의 매 렌더마다 강제 reload).
+
+수정: `!webview` 분기에서는 `webviewRefs`/`webviewReadyRef`/
+`initialWebviewSrcBySlotIdRef`만 정리하고, `webviewRefCallbacks`/
+`webviewRefCallbackOwnerTabIdsRef` 정리는 `cleanupTabSlotState`/`closeSlot`
+(슬롯이 진짜로 사라질 때)에만 맡김.
+
+**진단 4 — 탭 전환 시 webview unmount/remount (확정, 수정 완료)**
+
+`slots`가 `activeTab.group.slots`에서만 오는 구조라, 탭 전환 시 비활성 탭의
+webview가 전부 unmount되고 재진입 시 새로 mount됨(메모리의 "webview never
+unmount" 원칙이 탭 단위로는 깨져 있었던 셈). Gemini 딥링크가 fresh load될 때마다
+같은 튕김 재발.
+
+수정: 렌더링을 `activeTab.group.slots`가 아니라 `tabs.flatMap(ownerTab =>
+ownerTab.group.slots...)`로 변경해 **열린 모든 탭의 webview를 항상 mount 유지**,
+`display:none`으로만 숨김(activeTabId와 ownerTab.id 일치 + Stage 포함 여부로
+가시성 결정). `key`는 `${ownerTab.id}:${slot.id}`로 충돌 방지.
+`getSlotWebviewRef(slot, ownerTab.id)`로 owner 일관성 유지.
+
+⚠️ 2026-06-25 새벽에 시도했던 webview retention(recentTabIdsRef/retainedSlots
+방식)과는 구조가 다름 — 그때는 슬롯을 다른 탭으로 동적 재할당하려다 partition
+충돌과 탭 간 슬롯 누출 회귀로 전체 revert됨. 이번 방식은 각 탭이 자신의
+group.slots를 영구 소유한 채 단순히 계속 렌더만 하는 거라 슬롯 소유권 이동이
+없음.
+
+**시도했으나 실패하고 되돌린 것 — webview src를 about:blank로 시작 후 dom-ready
+시 loadURL (되돌림)**
+
+워크스페이스를 **닫았다가 다시 여는**(진짜 webview가 새로 생성되는) 경우, Gemini
+딥링크 fresh load가 가끔(10번 중 약 8번) 빈 화면을 보여주는 잔여 문제가 확인됨.
+원인으로 "webview 마운트 시 src 속성이 게스트 프로세스 연결 전에 너무 일찍
+설정돼 발생하는 초기 네비게이션 레이스"를 추정, src를 비워두고 dom-ready 이후에
+loadURL로 명령형 초기 네비게이션을 하는 방식을 시도.
+
+결과: 모든 provider가 완전히 빈 화면(about:blank)에서 멈추는 더 심각한 회귀
+발생, 콘솔 에러조차 안 뜸(=loadURL이 아예 호출 안 됨, 즉 dom-ready 자체가
+발생하지 않은 것으로 추정 — Electron webview가 src 없이는 게스트 프로세스를
+안 만드는 것으로 보임). src="about:blank" 명시로 재시도했으나, about:blank의
+dom-ready가 트리비얼하게 빨리 발생해 오히려 원래보다 레이스가 심해짐(10번 모두
+실패, 수동 새로고침도 안 먹힘).
+
+**진단 3까지의 안전한 상태로 되돌리고 이 시도는 폐기.** 더 이상 진행하지 않음.
+
+**남은 미해결 문제**
+
+워크스페이스를 닫았다가 다시 여는 경우(진짜 새 webview 생성), Gemini 딥링크
+fresh load가 약 10번 중 2번만 즉시 성공하고 나머지는 빈 화면(Gemini SPA가
+세션/인증 컨텍스트를 못 채우고 기본 화면을 그리는 것으로 추정)을 보여줌. 수동
+새로고침으로는 결국 항상(4~5회 이내) 성공함이 확인됨. 자동 재시도(reload loop)
+방식도 검토했으나 "막 정상 렌더링되던 것도 강제로 끊어버릴 수 있다"는 구조적
+결함 때문에 보류함. **탭 전환과 일반 대화(`/app/{id}`) 복원은 100% 정상** —
+영향받는 건 Gem/프로젝트 채팅(`/gem/.../...`)을 워크스페이스 재오픈으로 복원하는
+경우로 한정됨.
+
+**검증 방식**: 매 단계 Codex 작업 → src.zip 직접 추출해 diff/grep으로 코드
+레벨 검증(보고 텍스트만 믿지 않음) → 흥기님이 직접 Electron 앱에서 손으로
+반복 클릭/재현(클릭 자동화는 macOS 접근권한 문제로 Codex가 못 함) → 통과 시
+커밋. localStorage(`omni-workspaces`)와 live webview DOM(`getURL()`, `src`
+attribute)을 직접 비교하는 진단 스크립트로 "저장은 항상 정확했고, 문제는
+복원 타이밍/레이스였다"는 것을 실측으로 확인.
+
+
 ## 2026-06-30 — 저위험 구조 리팩터 1차 완료 (entitlement, data repository, memo 일부 분리)
 
 **배경**

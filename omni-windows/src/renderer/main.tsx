@@ -184,9 +184,9 @@ function createWorkspaceTab(workspace: WorkspaceRecord): Tab {
     workspaceId: workspace.id,
     group: {
       id: createId(),
-      slots: workspace.slots,
-      stageIds: workspace.stageIds,
-      dockIds: workspace.dockIds,
+      slots: workspace.slots.map((slot) => ({ ...slot })),
+      stageIds: [...workspace.stageIds],
+      dockIds: [...workspace.dockIds],
       layoutMode: workspace.layoutMode,
       dockMinimized: workspace.dockMinimized,
     },
@@ -344,6 +344,46 @@ function App() {
   const webviewRefs = React.useRef<Partial<Record<string, ProviderWebview>>>({});
   const webviewReadyRef = React.useRef<Partial<Record<string, boolean>>>({});
   const webviewRefCallbacks = React.useRef<Partial<Record<string, (webview: TrackedProviderWebview | null) => void>>>({});
+  const webviewRefCallbackOwnerTabIdsRef = React.useRef<Partial<Record<string, string>>>({});
+  const initialWebviewSrcBySlotIdRef = React.useRef<Record<string, string>>({});
+  const readRestorableLiveSlotUrl = React.useCallback((slot: Slot): string | null => {
+    const webview = webviewRefs.current[slot.id] as TrackedProviderWebview | undefined;
+
+    if (!webview || !webviewReadyRef.current[slot.id]) {
+      return null;
+    }
+
+    try {
+      const liveUrl = webview.getURL?.();
+
+      if (liveUrl && isRestorableUrl(slot.providerId, liveUrl)) {
+        return liveUrl;
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }, []);
+  const createLiveGroupSnapshot = React.useCallback((group: Group): Group => {
+    return {
+      ...group,
+      slots: group.slots.map((slot) => {
+        const liveUrl = readRestorableLiveSlotUrl(slot);
+
+        if (liveUrl) {
+          return {
+            ...slot,
+            currentUrl: liveUrl,
+          };
+        }
+
+        return { ...slot };
+      }),
+      stageIds: [...group.stageIds],
+      dockIds: [...group.dockIds],
+    };
+  }, [readRestorableLiveSlotUrl]);
   const memoResultsRef = React.useRef<HTMLDivElement | null>(null);
   const draggedIdRef = React.useRef<string | null>(null);
   const htmlDragSourceRef = React.useRef<'stage' | 'dock' | null>(null);
@@ -391,15 +431,10 @@ function App() {
       }),
     );
   }, [activeTabId]);
-  const setGroupRef = React.useRef(setGroup);
 
   React.useEffect(() => {
     memoRepository.save(memos);
   }, [memos]);
-
-  React.useEffect(() => {
-    setGroupRef.current = setGroup;
-  }, [setGroup]);
 
   React.useEffect(() => {
     if (tabs.length < MAX_TABS && workspacePanelNotice) {
@@ -572,23 +607,32 @@ function App() {
     });
   }, []);
 
-  const updateSlotTitle = React.useCallback((slotId: string, title: string) => {
-    setGroupRef.current((currentGroup) => {
-      const currentSlot = currentGroup.slots.find((slot) => slot.id === slotId);
+  const updateSlotTitle = React.useCallback((slotId: string, ownerTabId: string, title: string) => {
+    setTabs((currentTabs) =>
+      currentTabs.map((tab) => {
+        if (tab.id !== ownerTabId) {
+          return tab;
+        }
 
-      if (currentSlot?.title === title) {
-        return currentGroup;
-      }
+        const currentSlot = tab.group.slots.find((slot) => slot.id === slotId);
 
-      return {
-        ...currentGroup,
-        slots: currentGroup.slots.map((currentSlot) => (currentSlot.id === slotId ? { ...currentSlot, title } : currentSlot)),
-      };
-    });
+        if (currentSlot?.title === title) {
+          return tab;
+        }
+
+        return {
+          ...tab,
+          group: {
+            ...tab.group,
+            slots: tab.group.slots.map((currentSlot) => (currentSlot.id === slotId ? { ...currentSlot, title } : currentSlot)),
+          },
+        };
+      }),
+    );
   }, []);
 
   const refreshGeminiSlotTitle = React.useCallback(
-    (slotId: string, webview: TrackedProviderWebview) => {
+    (slotId: string, ownerTabId: string, webview: TrackedProviderWebview) => {
       if (typeof webview.executeJavaScript !== 'function') {
         return;
       }
@@ -599,7 +643,7 @@ function App() {
         void executeJavaScript<unknown>(createGeminiTitleScript())
           .then((title) => {
             if (typeof title === 'string' && isMeaningfulGeminiTitle(title)) {
-              updateSlotTitle(slotId, title.trim());
+              updateSlotTitle(slotId, ownerTabId, title.trim());
             }
           })
           .catch((error: unknown) => {
@@ -611,12 +655,13 @@ function App() {
   );
 
   const attachNavigationTracker = React.useCallback(
-    (slot: Slot) => (webview: TrackedProviderWebview | null) => {
+    (slot: Slot, ownerTabId: string) => (webview: TrackedProviderWebview | null) => {
       const { id: slotId, providerId } = slot;
 
       if (!webview) {
         delete webviewRefs.current[slotId];
         delete webviewReadyRef.current[slotId];
+        delete initialWebviewSrcBySlotIdRef.current[slotId];
         return;
       }
 
@@ -635,27 +680,36 @@ function App() {
             saveProviderUrl(providerId, navigatedUrl);
 
             if (isRestorableUrl(providerId, navigatedUrl)) {
-              setGroupRef.current((currentGroup) => {
-                const currentSlot = currentGroup.slots.find((slot) => slot.id === slotId);
+              setTabs((currentTabs) =>
+                currentTabs.map((tab) => {
+                  if (tab.id !== ownerTabId) {
+                    return tab;
+                  }
 
-                if (currentSlot?.currentUrl === navigatedUrl) {
-                  return currentGroup;
-                }
+                  const currentSlot = tab.group.slots.find((slot) => slot.id === slotId);
 
-                return {
-                  ...currentGroup,
-                  slots: currentGroup.slots.map((slot) =>
-                    slot.id === slotId ? { ...slot, currentUrl: navigatedUrl } : slot,
-                  ),
-                };
-              });
+                  if (currentSlot?.currentUrl === navigatedUrl) {
+                    return tab;
+                  }
+
+                  return {
+                    ...tab,
+                    group: {
+                      ...tab.group,
+                      slots: tab.group.slots.map((slot) =>
+                        slot.id === slotId ? { ...slot, currentUrl: navigatedUrl } : slot,
+                      ),
+                    },
+                  };
+                }),
+              );
             }
           }
 
           updateSlotNavigationState(slotId);
 
           if (providerId === 'gemini') {
-            refreshGeminiSlotTitle(slotId, webview);
+            refreshGeminiSlotTitle(slotId, ownerTabId, webview);
           }
         };
 
@@ -665,18 +719,18 @@ function App() {
           updateSlotNavigationState(slotId);
 
           if (providerId === 'gemini') {
-            refreshGeminiSlotTitle(slotId, webview);
+            refreshGeminiSlotTitle(slotId, ownerTabId, webview);
           }
         });
         webview.addEventListener('page-title-updated', (event: Event & { title?: string }) => {
           const title = typeof event.title === 'string' && event.title.trim() ? event.title.trim() : getProviderConfig(providerId).label;
 
           if (providerId === 'gemini' && !isMeaningfulGeminiTitle(title)) {
-            refreshGeminiSlotTitle(slotId, webview);
+            refreshGeminiSlotTitle(slotId, ownerTabId, webview);
             return;
           }
 
-          updateSlotTitle(slotId, title);
+          updateSlotTitle(slotId, ownerTabId, title);
         });
         webview.addEventListener('did-fail-load', (event: WebviewNavigationEvent) => {
           if (event.isMainFrame === false || event.errorCode === -3) {
@@ -722,8 +776,13 @@ function App() {
   );
 
   const getSlotWebviewRef = React.useCallback(
-    (slot: Slot) => {
-      webviewRefCallbacks.current[slot.id] ??= attachNavigationTracker(slot);
+    (slot: Slot, ownerTabId: string) => {
+      if (webviewRefCallbackOwnerTabIdsRef.current[slot.id] !== ownerTabId) {
+        delete webviewRefCallbacks.current[slot.id];
+        webviewRefCallbackOwnerTabIdsRef.current[slot.id] = ownerTabId;
+      }
+
+      webviewRefCallbacks.current[slot.id] ??= attachNavigationTracker(slot, ownerTabId);
       return webviewRefCallbacks.current[slot.id];
     },
     [attachNavigationTracker],
@@ -1431,6 +1490,8 @@ function App() {
       delete webviewRefs.current[slotId];
       delete webviewReadyRef.current[slotId];
       delete webviewRefCallbacks.current[slotId];
+      delete webviewRefCallbackOwnerTabIdsRef.current[slotId];
+      delete initialWebviewSrcBySlotIdRef.current[slotId];
     });
 
     setNavigationStates((current) => {
@@ -1503,12 +1564,13 @@ function App() {
       let workspace: ReturnType<typeof workspaceRepository.create>;
 
       try {
+        const snapshotGroup = createLiveGroupSnapshot(activeTab.group);
         workspace = workspaceRepository.create(name, {
-          slots: activeTab.group.slots,
-          stageIds: activeTab.group.stageIds,
-          dockIds: activeTab.group.dockIds,
-          layoutMode: activeTab.group.layoutMode,
-          dockMinimized: activeTab.group.dockMinimized,
+          slots: snapshotGroup.slots,
+          stageIds: snapshotGroup.stageIds,
+          dockIds: snapshotGroup.dockIds,
+          layoutMode: snapshotGroup.layoutMode,
+          dockMinimized: snapshotGroup.dockMinimized,
         });
       } catch {
         setWorkspacePromotionError('Could not save this workstation.');
@@ -1532,7 +1594,7 @@ function App() {
       setWorkspaceRecords(workspaceRepository.list());
       closeWorkspacePromotion();
     },
-    [activeTab, activeTabId, closeWorkspacePromotion, workspacePromotionName],
+    [activeTab, activeTabId, closeWorkspacePromotion, createLiveGroupSnapshot, workspacePromotionName],
   );
 
   const handleCreateGroupTab = React.useCallback(() => {
@@ -1577,6 +1639,10 @@ function App() {
     setNewTabWorkspaceListOpen((isOpen) => !isOpen);
   }, []);
 
+  const refreshWorkspaceRecords = React.useCallback(() => {
+    setWorkspaceRecords(workspaceRepository.list());
+  }, []);
+
   const closeTab = React.useCallback((tabId: string) => {
     setTabs((currentTabs) => {
       if (currentTabs.length <= 1) {
@@ -1591,6 +1657,17 @@ function App() {
 
       const closingTab = currentTabs[closingIndex];
       const nextTabs = currentTabs.filter((tab) => tab.id !== tabId);
+      if (closingTab.kind === 'workspace' && closingTab.workspaceId) {
+        const snapshotGroup = createLiveGroupSnapshot(closingTab.group);
+        workspaceRepository.update(closingTab.workspaceId, {
+          slots: snapshotGroup.slots,
+          stageIds: snapshotGroup.stageIds,
+          dockIds: snapshotGroup.dockIds,
+          layoutMode: snapshotGroup.layoutMode,
+          dockMinimized: snapshotGroup.dockMinimized,
+        });
+        refreshWorkspaceRecords();
+      }
       cleanupTabSlotState(closingTab.group.slots.map((slot) => slot.id));
 
       setActiveTabId((currentActiveTabId) => {
@@ -1611,26 +1688,23 @@ function App() {
 
       return nextTabs;
     });
-  }, [cleanupTabSlotState]);
-
-  const refreshWorkspaceRecords = React.useCallback(() => {
-    setWorkspaceRecords(workspaceRepository.list());
-  }, []);
+  }, [cleanupTabSlotState, createLiveGroupSnapshot, refreshWorkspaceRecords]);
 
   React.useEffect(() => {
     if (activeTab.kind !== 'workspace' || activeWorkspaceId === null) {
       return;
     }
 
+    const snapshotGroup = createLiveGroupSnapshot(activeTab.group);
     workspaceRepository.update(activeWorkspaceId, {
-      slots: activeTab.group.slots,
-      stageIds: activeTab.group.stageIds,
-      dockIds: activeTab.group.dockIds,
-      layoutMode: activeTab.group.layoutMode,
-      dockMinimized: activeTab.group.dockMinimized,
+      slots: snapshotGroup.slots,
+      stageIds: snapshotGroup.stageIds,
+      dockIds: snapshotGroup.dockIds,
+      layoutMode: snapshotGroup.layoutMode,
+      dockMinimized: snapshotGroup.dockMinimized,
     });
     refreshWorkspaceRecords();
-  }, [activeTab.kind, activeTab.group, activeWorkspaceId, refreshWorkspaceRecords]);
+  }, [activeTab.kind, activeTab.group, activeWorkspaceId, createLiveGroupSnapshot, refreshWorkspaceRecords]);
 
   const closeWorkspacePanel = React.useCallback(() => {
     setSidebarView(null);
@@ -1655,7 +1729,8 @@ function App() {
         return;
       }
 
-      const newTab = createWorkspaceTab(workspace);
+      const latestWorkspace = workspaceRepository.get(workspace.id) ?? workspace;
+      const newTab = createWorkspaceTab(latestWorkspace);
       let wasAdded = false;
 
       flushSync(() => {
@@ -1870,6 +1945,8 @@ function App() {
     delete webviewRefs.current[slotId];
     delete webviewReadyRef.current[slotId];
     delete webviewRefCallbacks.current[slotId];
+    delete webviewRefCallbackOwnerTabIdsRef.current[slotId];
+    delete initialWebviewSrcBySlotIdRef.current[slotId];
 
     setGroup((currentGroup) => ({
       ...currentGroup,
@@ -2456,62 +2533,69 @@ function App() {
                 onDrop={handleStageContainerDrop}
               >
                 {stageIds.length === 0 && <div className="stage-empty">Open a docked slot to start.</div>}
-                {slots.map((slot) => {
-                  const provider = getProviderConfig(slot.providerId);
-                  const stageIndex = stageIds.indexOf(slot.id);
-                  const isInStage = stageIndex >= 0;
-                  const isMaximized = maximizedSlotId === slot.id;
-                  const navigationState = navigationStates[slot.id] ?? {
-                    canGoBack: false,
-                    canGoForward: false,
-                    isDomReady: false,
-                  };
+                {tabs.flatMap((ownerTab) =>
+                  ownerTab.group.slots.map((slot) => {
+                    const provider = getProviderConfig(slot.providerId);
+                    const isOwnerActive = ownerTab.id === activeTabId;
+                    const ownerStageIds = ownerTab.group.stageIds;
+                    const stageIndex = ownerStageIds.indexOf(slot.id);
+                    const isInStage = stageIndex >= 0;
+                    const isVisible = isOwnerActive && isInStage;
+                    const isMaximized = isOwnerActive && maximizedSlotId === slot.id;
+                    const navigationState = navigationStates[slot.id] ?? {
+                      canGoBack: false,
+                      canGoForward: false,
+                      isDomReady: false,
+                    };
+                    initialWebviewSrcBySlotIdRef.current[slot.id] ??= slot.currentUrl;
+                    const initialWebviewSrc = initialWebviewSrcBySlotIdRef.current[slot.id];
 
-                  return (
-                    <div
-                      key={slot.id}
-                      className={`provider-pane expanded ${draggingSlotId === slot.id ? 'dragging' : ''} ${isMaximized ? 'maximized' : ''}`}
-                      data-slot-id={slot.id}
-                      onDragOver={(event) => handleSlotDragOver('stage', slot.id, event)}
-                      onDrop={(event) => handleSlotDrop('stage', slot.id, event)}
-                      style={{ display: isInStage ? undefined : 'none', order: isInStage ? stageIndex : undefined }}
-                    >
-                      <SlotHeader
-                        providerId={slot.providerId}
-                        label={provider.label}
-                        compact={stageIds.length === MAX_STAGE_SLOTS && !isStageGrid}
-                        canGoBack={navigationState.canGoBack}
-                        canGoForward={navigationState.canGoForward}
-                        onPointerDown={(event) => {
-                          if (isInStage && !isMaximized) {
-                            handleStageHeaderPointerDown(slot.id, event);
-                          }
-                        }}
-                        onClickCapture={handleStageHeaderClickCapture}
-                        onBack={() => goSlotBack(slot.id)}
-                        onForward={() => goSlotForward(slot.id)}
-                        onReload={() => reloadSlot(slot.id)}
-                        onHome={() => startSlotNewChat(slot)}
-                        isMaximized={isMaximized}
-                        onToggleMaximize={() => {
-                          setSidebarView(null);
-                          setMemoPanelOpen(false);
-                          setActiveSlotId(slot.id);
-                          setMaximizedSlotId((currentMaximizedSlotId) => (currentMaximizedSlotId === slot.id ? null : slot.id));
-                        }}
-                        onClose={() => closeSlot(slot.id)}
-                      />
-                      <webview
-                        className="provider-webview"
-                        src={slot.currentUrl}
-                        partition={provider.partition}
-                        preload={webviewCapturePreloadUrl?.startsWith('file:') ? webviewCapturePreloadUrl : undefined}
-                        allowpopups={'true' as unknown as boolean}
-                        ref={getSlotWebviewRef(slot)}
-                      />
-                    </div>
-                  );
-                })}
+                    return (
+                      <div
+                        key={`${ownerTab.id}:${slot.id}`}
+                        className={`provider-pane expanded ${draggingSlotId === slot.id ? 'dragging' : ''} ${isMaximized ? 'maximized' : ''}`}
+                        data-slot-id={slot.id}
+                        onDragOver={(event) => handleSlotDragOver('stage', slot.id, event)}
+                        onDrop={(event) => handleSlotDrop('stage', slot.id, event)}
+                        style={{ display: isVisible ? undefined : 'none', order: isVisible ? stageIndex : undefined }}
+                      >
+                        <SlotHeader
+                          providerId={slot.providerId}
+                          label={provider.label}
+                          compact={ownerStageIds.length === MAX_STAGE_SLOTS && !isStageGrid}
+                          canGoBack={navigationState.canGoBack}
+                          canGoForward={navigationState.canGoForward}
+                          onPointerDown={(event) => {
+                            if (isVisible && !isMaximized) {
+                              handleStageHeaderPointerDown(slot.id, event);
+                            }
+                          }}
+                          onClickCapture={handleStageHeaderClickCapture}
+                          onBack={() => goSlotBack(slot.id)}
+                          onForward={() => goSlotForward(slot.id)}
+                          onReload={() => reloadSlot(slot.id)}
+                          onHome={() => startSlotNewChat(slot)}
+                          isMaximized={isMaximized}
+                          onToggleMaximize={() => {
+                            setSidebarView(null);
+                            setMemoPanelOpen(false);
+                            setActiveSlotId(slot.id);
+                            setMaximizedSlotId((currentMaximizedSlotId) => (currentMaximizedSlotId === slot.id ? null : slot.id));
+                          }}
+                          onClose={() => closeSlot(slot.id)}
+                        />
+                        <webview
+                          className="provider-webview"
+                          src={initialWebviewSrc}
+                          partition={provider.partition}
+                          preload={webviewCapturePreloadUrl?.startsWith('file:') ? webviewCapturePreloadUrl : undefined}
+                          allowpopups={'true' as unknown as boolean}
+                          ref={getSlotWebviewRef(slot, ownerTab.id)}
+                        />
+                      </div>
+                    );
+                  }),
+                )}
                 {draggingSlotId && (
                   <div
                     className="stage-drop-overlay"

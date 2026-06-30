@@ -5,71 +5,261 @@
 > 목적: 같은 방법을 또 시도하지 않게 막는 것 + 새 채팅에서 바로 이어갈 항목 확인.
 
 ---
+## [부분 해결, 4개 레이어 버그 진단/수정 완료 + 잔여 1건] Gemini 채팅 클릭/전환/재오픈 시 홈으로 튕기는 문제
 
-## [막힘, 최우선] Gemini 채팅 클릭/메시지 전송 시 홈 화면으로 튕기는 문제 — 1차 진단 기각됨
+**이전 상태 (1차 진단 기각, 위 구버전 기록)**
+- `isMainFrame` 가드 시도는 대조 실험으로 효과 없음이 확정되어 기각됨
+- main은 가드 추가 이전 상태로 복귀, 버그는 그대로 남아있었음
+
+**2026-06-30 세션에서 진행한 전체 흐름**
+
+증상이 하나가 아니라 **레이어가 다른 네 가지 문제가 겹쳐 있었다**는 게 핵심
+결론. 디버깅 도중 새 패치가 새 증상을 만들고, 그 증상을 또 진단하는 식으로
+총 4단계를 거쳤음. 순서대로 기록.
+
+---
+
+### 1단계 — webview src 피드백 루프 (확정, 수정 완료)
+
+**진단**
+`<webview src={slot.currentUrl}>` 구조에서 `did-navigate-in-page`가
+`currentUrl` state를 갱신할 때마다 React가 `src`를 재할당 → 살아있는 webview가
+강제 full reload됨. Gemini 딥링크는 fresh reload 시 홈/젬 목록으로 튕기고,
+Claude/ChatGPT는 같은 메커니즘이 "깜빡임"으로만 보였음(딥링크가 fresh load에
+강해서 강제 reload돼도 같은 화면이 다시 뜸).
+
+**검증 방법**
+대조 실험: `saveCurrentUrl`에서 `providerId === 'gemini'`인 경우에만
+`currentUrl` state 갱신을 임시로 차단(`diagnose/gemini-src-feedback-loop`
+브랜치, 커밋 안 함) → Gemini만 안 튕기고 Grok/Perplexity는 여전히 깜빡임 →
+변수 하나만 바꾼 깨끗한 대조로 원인 확정.
+
+**수정**
+슬롯별 초기 src를 `initialWebviewSrcBySlotIdRef`(ref)에 마운트 시 1회만
+고정(`??=`), 이후 `currentUrl` state 변경이 살아있는 webview의 `src`에
+되먹임되지 않게 함. `currentUrl` state 자체는 저장/복원용으로 계속 추적. ref
+정리는 `!webview` null 분기, `cleanupTabSlotState`, `closeSlot` 3곳에서.
+
+**검증**
+diff로 7줄 추가 + 1줄 교체(`src={slot.currentUrl}` → `src={initialWebviewSrc}`)
+임을 코드 레벨로 확인, 스코프 크리프 없음. 클릭 즉시 튕김 해결, 깜빡임 해결.
+부수 효과로 콘솔의 `GUEST_VIEW_MANAGER_CALL ERR_ABORTED (-3)` 노이즈도 크게
+감소(강제 reload로 인한 navigation abort 흔적이었던 것으로 추정).
+
+---
+
+### 2단계 — 탭 전환 시 URL 갱신이 엉뚱한 탭에 적용됨 (확정, 수정 완료)
 
 **증상**
-- Gemini 로그인은 정상, 브로드캐스트로 메시지 전송도 정상 들어감
-- 단, 메시지를 보내거나 채팅 기록에서 기존 대화를 클릭하면 곧바로 홈
-  화면으로 돌아감. Gem(프로젝트)에 속한 대화를 클릭하면 "삭제된 젬으로 한
-  채팅입니다"라며 젬 채팅 목록으로 돌아감
-- 같은 계정으로 일반 Chrome 브라우저에서는 정상 동작 — 즉 Gemini 서비스
-  자체 문제가 아니라 우리 앱(Electron webview) 환경에서만 발생
+1단계 패치 후에도, 워크스페이스 안에서 Gemini 대화로 이동한 뒤 **탭을
+전환했다가 돌아오면** Gemini가 홈으로 돌아감. closeTab 시 워크스페이스 저장
+타이밍을 의심해서 먼저 고쳤으나(탭 닫는 순간 `workspaceRepository.update`를
+한 번 더 호출하도록) 효과 없었음 — "탭 전환만 해도 똑같이 깨진다"는 추가
+증상이 나와서 저장 타이밍 문제가 아님이 드러남.
 
-**1차 진단 (기각됨)**
-- `saveCurrentUrl`(did-navigate/did-navigate-in-page 핸들러)이
-  `event.isMainFrame`을 체크하지 않고 모든 navigation을 `slot.currentUrl`에
-  반영하는 게 원인이라고 진단. Gemini는 동일 도메인(gemini.google.com)
-  서브프레임이 많아서, 서브프레임 navigate가 메인 채팅 URL을 덮어쓰고
-  `<webview src={slot.currentUrl}>`가 그 잘못된 URL로 강제 리로드된다는
-  메커니즘
-- 이 진단은 6/28 웹슬롯 2단계 2차 시도 때 "증상 A"로 이미 한 번
-  발견·수정·검증됐던 것과 동일했음 (그 브랜치 자체는 다른 이유로 전체
-  폐기되어 main에 미반영 상태였음). 그래서 검증된 해법을 단독 재적용하는
-  것으로 보고 진행함
-- `isMainFrame === false` 가드를 `fix/gemini-subframe-navigation-bounce`
-  브랜치에서 작업, 커밋 `6e46cf5`로 main에 머지
-- **재현 테스트: 머지 후에도 증상 동일하게 재현됨**
-- **대조 실험: `git revert 6e46cf5`로 가드를 제거한 뒤에도 증상 동일하게
-  재현됨**
-- 결론: 가드 추가 여부와 무관하게 증상이 그대로 발생 → `isMainFrame` 미체크는
-  원인이 아니거나, 있다 해도 전체 원인의 일부에 불과함. **1차 진단은
-  기각.** 현재 main은 가드가 제거된 상태(추가 커밋 + revert 커밋이 히스토리에
-  남아있고, 코드 동작은 가드 추가 이전과 동일)
+**진단**
+`setGroup`(및 `setGroupRef`)이 `activeTabId`를 클로저로 캡처해서 항상
+"현재 active한 탭"만 patch함. Gemini에서 navigate가 발생한 직후 사용자가
+다른 탭으로 전환하면, 그 navigate 이벤트가 처리되는 시점엔 이미
+`activeTabId`가 바뀌어 있어 엉뚱한(또는 존재하지 않는) 슬롯을 patch 시도 →
+원래 탭의 Gemini URL이 영원히 갱신 안 됨.
 
-**주의 — 잘못된 신호였던 것**
-- 작업 중간에 "껐다 켰더니 정상 작동한다"고 확인됐던 적이 있었음. 이건
-  실제로 고쳐진 게 아니라 일시적으로 우연히 증상이 안 나타난 것이었을
-  가능성이 높음. 6/29 포트 충돌 사례("껐다 켰더니 됨")처럼, "재시작하면
-  된다"가 항상 근본 해결을 의미하지 않는다는 걸 다시 한번 확인함 — 재시작
-  후 정상 동작 1회만으로 "해결됨"이라 단정하지 말 것
+**수정**
+`attachNavigationTracker`가 `slot`과 함께 `ownerTabId`(그 슬롯이 실제로
+속한 탭 id)를 캡처하도록 시그니처 확장. `saveCurrentUrl`/`updateSlotTitle`이
+`setGroupRef`(activeTabId 의존) 대신 `ownerTabId`를 직접 대상으로 하는
+`setTabs` 호출로 전환.
 
-**다음에 시도해볼 것 (아직 미시도)**
-- 파티션 캐시 오염 가능성 점검: 메모리에 있는 "반복 로그인 실패 시 webview가
-  완전히 빈 화면이 되면 해당 provider의 Partitions 폴더 삭제 후 재로그인"
-  해법과 같은 부류일 수 있음. Gemini 파티션만 따로 삭제 후 재로그인해서
-  증상 재현 여부 확인
-- Google webview 감지 불안정성 가능성: Perplexity/Grok OAuth 불안정 사례
-  ("Google의 embedded webview 감지가 고정 차단이 아닌 리스크 기반
-  휴리스틱이라 불안정하게 나타난다")와 같은 부류일 가능성 — 같은 구글
-  생태계라 유사한 불안정성을 겪고 있을 수 있음
-- 증상이 발생하는 정확한 순간에 DevTools 콘솔/네트워크 탭 캡처 — 아직 안 함,
-  401/403 같은 인증 에러나 리다이렉트 응답이 있는지 확인 필요
-- `did-navigate`/`did-navigate-in-page` 외 다른 이벤트(`will-navigate`,
-  `did-redirect-navigation` 등)에서 유사한 문제가 발생하는지 점검
-- `refreshGeminiSlotTitle`의 `executeJavaScript` 실행(제목 텍스트 긁어오는
-  스크립트, 500ms 디바운스)이 부작용으로 navigate를 유발하는지 점검 — 코드
-  검토상 read-only로 보이지만 재확인 필요
+---
 
-**현재 상태**
-- main에는 isMainFrame 가드 커밋과 그 revert 커밋이 모두 남아있음 (코드
-  동작은 가드 추가 이전과 동일, 즉 원래 버그가 있던 상태로 복귀)
-- `fix/gemini-subframe-navigation-bounce` 브랜치는 머지 후 삭제 시도했으나
-  실제 로컬/원격 삭제 여부 미확인 — 다음 정리 작업 때 `git branch -a`로
-  확인하고 안 지워졌으면 정리할 것
-- 재개 조건: 위 미시도 항목 중 하나(특히 콘솔 캡처)로 추가 단서를 확보한
-  뒤에 재진단할 것. 같은 방식(isMainFrame 가드)을 다시 시도하지 말 것 —
-  이미 효과 없음이 대조 실험으로 확인됨
+### 3단계 — ref callback 무한 재생성 루프 (2단계 패치의 자체 회귀, 발견 즉시 수정)
+
+**증상**
+2단계 패치 적용 직후, Gemini 클릭 즉시 튕김이 부활하고 Claude/ChatGPT/Grok
+깜빡임 + `GUEST_VIEW_MANAGER_CALL ERR_ABORTED` 콘솔 노이즈가 대량으로
+폭증함(1단계 이전보다 더 심함). 1단계에서 고친 게 다시 깨진 것처럼 보였으나,
+실제로는 2단계가 새로 만든 별개의 회귀였음.
+
+**진단**
+2단계의 ownerTabId 패치 도입 과정에서, `attachNavigationTracker`의
+`!webview` 정리 분기가 `webviewRefCallbacks`/
+`webviewRefCallbackOwnerTabIdsRef`까지 같이 지우도록 구현됨. React가 ref를
+`null`로 호출(표준 cleanup)할 때마다 이 캐시가 지워지고, 다음 렌더에서 owner
+비교(`webviewRefCallbackOwnerTabIdsRef.current[slot.id] !== ownerTabId`)가
+`undefined !== ownerTabId`로 항상 참이 되어 콜백이 매번 새로 생성됨 → React가
+새 ref 함수 레퍼런스를 받을 때마다 이전 콜백 `null` 호출 + 새 콜백 호출을
+반복 → 무한 루프.
+
+**검증 방법**
+임시 진단 로그(`[GeminiMountDebug]`, 커밋 안 함)로 `webview null callback
+fired`와 `webview attached`가 거의 매 렌더마다 반복 발생하는 걸 직접 확인.
+`ownerMatched: true`인데도 반복된다는 게 캐시 무효화 버그의 직접 증거였음.
+
+**수정**
+`!webview` 분기에서는 `webviewRefs`/`webviewReadyRef`/
+`initialWebviewSrcBySlotIdRef`만 정리하고, `webviewRefCallbacks`/
+`webviewRefCallbackOwnerTabIdsRef` 정리는 `cleanupTabSlotState`/`closeSlot`
+(슬롯이 진짜로 사라질 때)에만 맡김. 진단 로그는 전부 제거.
+
+**검증**
+콘솔 에러가 claude.ai 2줄 수준으로 확 줄어듦 확인, Gemini 클릭 즉시 튕김도
+재해결 확인.
+
+---
+
+### 4단계 — 탭 전환 시 webview unmount/remount (확정, 수정 완료)
+
+**증상**
+3단계까지 적용해도 "탭 전환 후 돌아오면 Gemini가 홈으로" 증상이 여전히
+재현됨(2~3초 안에 빠르게 전환해도 동일).
+
+**진단**
+`slots`가 `activeTab.group.slots`에서만 오는 구조라, 탭 전환 시 비활성
+탭의 webview가 전부 unmount되고 재진입 시 새로 mount됨(메모리의 "webview
+never unmount" 원칙이 탭 단위로는 깨져 있었던 셈). Gemini 딥링크가 fresh
+load될 때마다 같은 튕김 재발.
+
+**수정**
+렌더링을 `activeTab.group.slots`가 아니라 `tabs.flatMap(ownerTab =>
+ownerTab.group.slots...)`로 변경해 **열린 모든 탭의 webview를 항상 mount
+유지**, `display:none`으로만 숨김(activeTabId와 ownerTab.id 일치 + Stage
+포함 여부로 가시성 결정). `key`는 `${ownerTab.id}:${slot.id}`로 충돌 방지.
+`getSlotWebviewRef(slot, ownerTab.id)`로 owner 일관성 유지.
+
+⚠️ **2026-06-25 새벽에 시도했던 webview retention(`recentTabIdsRef`/
+`retainedSlots` 방식, 아래 "[폐기된 접근법] Stage 3" 항목 참고)과는 구조가
+다름.** 그때는 슬롯을 다른 탭으로 동적 재할당하려다 partition 충돌과 탭 간
+슬롯 누출 회귀로 전체 revert됨. 이번 방식은 각 탭이 자신의 `group.slots`를
+영구 소유한 채 단순히 계속 렌더만 하는 거라 슬롯 소유권 이동이 전혀 없음.
+"다시 시도하지 말 것"이라는 위 폐기 기록은 **슬롯을 다른 탭으로 옮기는 방식**
+한정이고, 이번 keep-mounted 방식까지 막는 건 아님 — 구분해서 이해할 것.
+
+**검증**
+탭 전환 10회 반복, Gemini 유지 확인. Claude/ChatGPT/Grok/Perplexity도 탭
+전환 시 불필요한 깜빡임 감소 확인.
+
+---
+
+### 시도했으나 실패하고 되돌린 것 — webview를 about:blank로 시작 후 dom-ready 시 loadURL
+
+**남은 문제 발견**
+4단계까지 적용해도, **워크스테이션을 X로 닫았다가 사이드바에서 다시 여는**
+경우(=webview가 진짜 새로 생성되는 경우)에는 Gemini Gem/프로젝트 채팅이
+약 10번 중 2번만 자동으로 바로 뜨고 나머지는 빈 기본 화면("살펴보고자 하는
+새로운 아이디어가 있나요?")을 보여줌.
+
+**진단 과정 (실측 데이터로 저장/복원 자체는 무죄 확정)**
+- `localStorage.getItem('omni-workspaces')`로 저장된 `slot.currentUrl`을
+  직접 확인 → 매번 정확한 Gem 딥링크였음(`gem/{id1}/{id2}` 형태)
+- `document.querySelectorAll('webview')`로 live DOM의 `attrSrc`/`getURL()`을
+  직접 확인 → 저장값과 항상 정확히 일치, 강제 reload 흔적도 없음
+- "성공했을 때"와 "실패했을 때"를 같은 진단 스크립트로 나란히 비교 →
+  **`slotCurrentUrl`/`attrSrc`/`liveUrl`이 완전히 동일**, 유일하게 다른 건
+  `title`(성공: 실제 대화 제목 `'Flash'`, 실패: 플레이스홀더
+  `'Gemini와의 대화'`)
+- **결론: URL 전달은 한 번도 안 틀렸다.** 문제는 "어떤 URL을 주느냐"가
+  아니라, **그 URL을 처음 fresh load할 때 Gemini SPA가 그 시점에 Gem
+  컨텍스트를 못 채우고 기본 화면을 그리는 타이밍 레이스**였음
+- 실측으로 reload 시도 → 사용자가 직접 새로고침 버튼을 눌러서 정상 화면("rep
+  radio 전력가")으로 전환되는 것 확인. 단, **1회로 되는 경우도 있고 4~5회
+  필요한 경우도 있음** — 레이스 해소 시점이 고정적이지 않음
+
+**근본 수정 시도 (실패)**
+의심: webview가 마운트될 때 `src` 속성이 JSX attribute로 즉시 박히면,
+Electron이 게스트 프로세스(guest WebContents)를 완전히 연결하기 전에
+네비게이션 요청이 먼저 발사되는 레이스가 있을 수 있다고 추정. 이게 세션
+내내 봤던 `GUEST_VIEW_MANAGER_CALL ERR_ABORTED (-3)` 노이즈의 진짜 원인일
+가능성으로 보고, "무해한 노이즈"로 치워뒀던 걸 재고.
+
+수정 시도: `<webview>`에서 `src` 속성을 완전히 제거하고, `dom-ready` 이벤트
+이후 1회성으로 `webview.loadURL(initialSrc)`를 명령형 호출하는 방식으로
+변경 — 네비게이션을 게스트 프로세스가 확실히 준비된 뒤로 미루려는 의도.
+
+**결과: 더 심각한 회귀**
+모든 provider(Gemini뿐 아니라 ChatGPT/Claude/Grok 전부)가 완전히 빈 화면에서
+멈춤, 콘솔 에러조차 안 뜸. 에러조차 없다는 건 `loadURL`이 한 번도 호출 안
+됐다는 뜻 → `dom-ready` 자체가 안 떴다는 뜻. **Electron의 `<webview>`는
+`src` 속성이 아예 없으면 게스트 프로세스를 안 만들고 `dom-ready`도 안 띄우는
+것으로 추정됨.**
+
+`src="about:blank"`로 명시해서 재시도 → 화면은 다시 뜨지만, **이번엔 10번 다
+실패하고 수동 새로고침조차 안 먹힘** — about:blank는 실제 네트워크 요청이
+없어서 `dom-ready`가 거의 즉시(트리비얼하게) 발생하고, 그 직후 곧바로
+`loadURL(실제 URL)`을 쏘면서 **원래보다 레이스가 더 빨리, 더 일관되게
+악화**된 것으로 추정.
+
+**최종 판단: 이 방향 폐기, 원복.** `src={initialWebviewSrc}` 직접 바인딩 +
+단순 `dom-ready` 리스너(추가 loadURL 없음)로 되돌림. 되돌리기 후 v4(4단계
+완료 시점) 베이스라인과 전체 diff를 떠서 about:blank/hasPerformedInitialLoad
+잔재가 전혀 없고, 1~4단계 수정사항은 모두 그대로 살아있음을 코드 레벨로
+확인. 이 상태로 커밋됨.
+
+⚠️ **이 방향(src 속성을 비우거나 늦게 부여하는 방식)으로 다시 시도하지 말 것.**
+Electron webview의 src-attribute 부재 시 게스트 프로세스 미생성 추정과
+about:blank의 트리비얼한 dom-ready 둘 다 확인된 함정.
+
+**또한 검토했으나 적용 안 한 것 — 자동 재시도(reload loop)**
+고정 횟수(예: 5회, 900ms 간격)로 무조건 재로드를 반복하는 방식도 지시문까지
+작성했으나, 사용자가 "막 정상 렌더링되던 것도 강제로 끊어버릴 수 있다"는
+구조적 결함을 지적해 적용하지 않음. 성공/실패를 판단할 신호가 없는 채로
+맹목적으로 도는 방식이라, 운 좋게 화면이 막 채워지던 순간을 오히려 또
+끊어버릴 위험이 있음. **시도 자체를 안 했으므로 "효과 없었다"가 아니라
+"채택하지 않았다"임 — 구분해서 기록.**
+
+---
+
+**현재 상태 (main 기준, 코드 레벨로 확인됨)**
+
+`grep -n "initialWebviewSrcBySlotIdRef" omni-windows/src/renderer/main.tsx`로
+1~4단계 수정사항이 main에 전부 살아있음을 확인함(2026-06-30 세션 종료
+시점). 단, 커밋 메시지(`Document Gemini bug investigation (inconclusive,
+reverted) and queue next steps`)가 마치 전체가 reverted된 것처럼 읽혀 혼동
+소지가 있음 — **실제로는 되돌려진 건 about:blank 시도뿐**이고, 1~4단계
+수정사항은 정상적으로 main에 포함되어 있음. 다음 세션 시작 시 이 grep으로
+재확인 권장.
+
+**해결된 것**
+- 클릭 즉시 튕김 (1단계)
+- 탭 전환 시 튕김 (2단계, 4단계)
+- 콘솔 GUEST_VIEW_MANAGER_CALL 노이즈 (1단계 부수 효과로 크게 감소)
+
+**남은 문제**
+워크스테이션을 닫았다가 다시 여는 경우(진짜 새 webview 생성), Gemini Gem/
+프로젝트 채팅(`/gem/.../...`)이 약 10번 중 2번만 자동으로 바로 뜨고
+나머지는 빈 화면. 일반 대화(`/app/{id}`)와 탭 전환은 영향 없음(100% 정상).
+
+**다음에 시도해볼 만한 방향 (미검증)**
+- Gemini 인증/세션 쿠키가 이미 partition에 영속돼 있다는 점을 고려하면,
+  진짜 레이스는 "세션 미준비"가 아니라 Gemini 클라이언트 자체의 부트스트랩
+  순서(예: 인증 상태 확인이 비동기로 늦게 끝나는데 그 사이 렌더링된 첫
+  화면이 재반영 안 되는 SPA 내부 동작)일 가능성. 우리 쪽에서 통제 불가능한
+  영역일 수 있음
+- DOM 콘텐츠를 직접 검사해서 "진짜 로드 성공"을 판정하는 방식은 프로젝트
+  원칙(완료 감지를 위한 DOM 스크래핑 금지, 아래 "확정" 관련 메모 참고)과
+  충돌하므로 지양. 단, `webview.getTitle()` 같은 Electron 네이티브 API로
+  "타이틀이 플레이스홀더('Gemini와의 대화')인지"를 확인하는 정도는 검토
+  여지 있음 — 이미 `refreshGeminiSlotTitle`이 유사한 일을 하고 있어 완전히
+  새로운 패턴은 아님
+- 영향 범위가 작다(Gem 채팅 + 재오픈 조합에만 한정, 탭 전환/일반 대화는
+  무관)는 점을 고려해, "알려진 한계"로 문서화하고 우선순위를 낮추는 것도
+  합리적 선택지
+- 재시도(reload loop) 방식을 다시 검토한다면, 최소한 "이미 화면이 정상
+  렌더링된 것 같으면 남은 재시도를 취소"하는 최소한의 신호 판단(예:
+  `webview.getTitle()`이 플레이스홀더가 아니게 바뀌면 중단)을 같이
+  넣을 것 — 순수 맹목 반복은 다시 시도하지 않기로 함
+
+**재개 조건**
+탭 전환/클릭 즉시 튕김이라는 핵심 증상은 이미 해결됐으므로, 이 잔여 이슈는
+더 이상 "최우선"이 아님. 웹슬롯 1단계 3차 시도 등 다음 작업으로 넘어가도
+무방. 재개 시 위 "다음에 시도해볼 만한 방향"부터 검토.
+
+**진단 패턴 (다음에 비슷한 복원 버그를 만나면 재사용)**
+localStorage(`omni-workspaces`)와 live webview DOM(`document.
+querySelectorAll('webview')`의 `getURL()`/`src` attribute)을 동시에 찍는
+진단 스크립트가 "저장 문제"와 "복원 타이밍 문제"를 빠르게 구분하는 데 매우
+유용했음. "성공했을 때"와 "실패했을 때"를 같은 스크립트로 나란히 비교하는
+것도 핵심이었음(이번엔 URL이 완전히 동일하고 title만 다르다는 게 결정적
+단서가 됨).
 
 ---
 
