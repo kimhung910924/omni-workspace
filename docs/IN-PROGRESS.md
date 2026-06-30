@@ -6,6 +6,29 @@
 
 ---
 
+## [보류] MemoPanel / MemoDetailModal 분리
+
+- 2026-06-30, 저위험 구조 리팩터(커밋 0~4b)에서 memo 관련 순수 헬퍼
+  (`memoUtils.ts`)와 반복 렌더링 단위(`MemoCard.tsx`)는 `features/memos`로
+  분리 완료. 메모 페이지 레이아웃 전체와 상세 모달은 의도적으로 main.tsx에
+  남겨둠 (실패가 아니라 의식적 보류)
+- 보류 사유: 상세 모달 안의 `navigateToMemoSource` 핸들러가 메모 도메인이
+  아니라 Stage/Dock/webview 도메인 상태에 직접 의존함:
+  ```ts
+  const sourceSlot = slots.find((slot) => slot.providerId === memo.provider);
+  webviewRefs.current[sourceSlot.id]?.loadURL?.(memo.sourceUrl);
+  ```
+  `slots`, `dockIds`, `moveSlotToStage`, `webviewRefs`를 props로 내려서
+  분리할 수는 있지만, 그러면 "순수 memo 모달"이 아니라 "memo + 워크스페이스
+  네비게이션 모달"이 되어 Stage/Dock 쪽 의존성이 features/memos로 새어
+  들어감. 나중에 Stage/Dock을 분리할 때 다시 뜯어야 하는 구조라 지금 하는
+  건 좋은 리팩터가 아니라 파일만 옮기는 것에 가까움
+- 재개 조건: Stage/Dock 또는 webview navigation 계층을 정리하는 라운드에서
+  함께 처리할 것. 그때 `navigateToMemoSource`는 main.tsx에 남기고 모달에는
+  콜백 prop으로만 내려주는 방식(슬롯 상태 자체는 안 건드림)을 우선 검토
+
+---
+
 ## [재시도 가능] 웹슬롯 1단계 — 2차 시도 실패했었지만, 진짜 원인은 포트 충돌로 밝혀짐
 
 **시도 1 (2026-06-27, 실패 → 폐기)**

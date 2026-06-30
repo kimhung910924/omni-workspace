@@ -2,6 +2,104 @@
 
 > 날짜 / 작업 / 문제 / 해결 형식으로 정리. 최신이 위로 오게 배치(최신순).
 > 같은 문제를 다시 만났을 때 검색해서 찾아보는 용도.
+
+## 2026-06-30 — 저위험 구조 리팩터 1차 완료 (entitlement, data repository, memo 일부 분리)
+
+**배경**
+
+`main.tsx`가 3,180줄 단일 파일에 탭/워크스테이션/Stage/Dock/메모/Broadcast가
+전부 뭉쳐있는 구조를 정리하기로 함. 한 번에 다 뜯으면 디버깅이 어려워지므로
+위험도 순으로 범위를 좁혀 진행: 저위험(데이터 계층, entitlement, memo
+일부) → 중위험(워크스테이션, 브로드캐스트, 탭) → 고위험(Stage/Dock
+드래그앤드롭)은 다음 라운드로 미룸. 6개 커밋으로 쪼개 각 커밋마다 Codex
+지시문 → src.zip 검증 → 사용자 직접 커밋/머지 절차를 거침. **전체 6개
+커밋 모두 동작 변경 없음(앱 외관/저장 포맷/기능 동일)이 목표였고 달성됨.**
+
+**커밋 0 — groupStore 죽은 코드 제거**
+- `groupStore.ts`의 `loadGroup()`/`saveGroup()`이 실행 경로에서 호출되지
+  않는 죽은 코드임을 grep으로 확인 (6/26 IN-PROGRESS 기록과 일치)
+- `Group` 타입만 `types.ts`로 이동, 파일 삭제
+- 브랜치: `refactor/remove-dead-groupstore`
+
+**커밋 1 — entitlement 계층 추가**
+- `src/renderer/entitlement/` 신설: `planTypes.ts`, `planConfig.ts`,
+  `useEntitlement.ts`
+- `PlanId = 'free' | 'pro' | 'promax'`, `PLAN_CONFIG`(satisfies
+  `Record<PlanId, PlanLimits>`)로 무료(2탭/2슬롯/분할2), 프로/프로맥스
+  (4탭/8슬롯/분할4) 정의
+- `main.tsx`의 하드코딩 상수(`MAX_TABS=4`, `MAX_SLOTS=8`,
+  `MAX_STAGE_SLOTS=4`)를 `useEntitlement()` 훅으로 대체. `CURRENT_MOCK_PLAN`은
+  `'pro'`로 고정 (현재 앱 동작과 동일하게 유지하기 위함 — `'free'`로 두면
+  탭/슬롯 수가 줄어드는 회귀가 생김)
+- 사용처 20곳 이상은 변수명을 그대로 유지해 한 줄도 수정하지 않음
+- 브랜치: `refactor/add-entitlement`
+
+**커밋 2 — data repository 계층 추가**
+- `src/renderer/data/repositories.ts`에 `WorkspaceRepository`,
+  `MemoRepository` 인터페이스 정의
+- `workspaceStore.ts`(전체)를 `data/local/localWorkspaceRepository.ts`로,
+  `memoStore.ts`의 localStorage IO 부분(`loadMemos`/`saveMemos`)을
+  `data/local/localMemoRepository.ts`로 이동. 내부 로직/검증 함수는 한 글자도
+  변경하지 않고 import 경로만 위치에 맞게 조정
+- `createMemo`(순수 팩토리 함수, IO 없음)는 `features/memos/memoStore.ts`에
+  그대로 유지 — repository로 옮기지 않음
+- `main.tsx`의 15개 호출부를 `workspaceRepository.list()` 등으로 1:1 교체
+- `data/sync/README.md` 추가: "local repository는 교체 대상이 아니라
+  1차 저장소, Supabase는 향후 동기화 보조 계층" 원칙 기록
+- localStorage key(`omni-workspaces`, `omni-memos`)와 JSON 포맷은 변경 없음
+- 브랜치: `refactor/add-data-repositories`
+
+**커밋 3 — PersistedMeta 옵셔널 필드 추가**
+- `data/persistedMeta.ts`에 `SyncState`, `PersistedMeta`
+  (`schemaVersion?`, `deletedAt?`, `syncState?`, `lastSyncedAt?`) 신설
+- `WorkspaceRecord`, `Memo` 타입에 `& PersistedMeta` 교차 타입으로 추가.
+  `createdAt`/`updatedAt`은 두 타입이 각각 string/number로 의미가 달라
+  PersistedMeta에 포함하지 않음
+- 순환 의존 방지를 위해 `PersistedMeta`를 `repositories.ts`가 아닌 독립
+  파일에 정의 (`repositories.ts`가 `WorkspaceRecord`/`Memo`를 import하므로,
+  반대 방향 import 시 순환 발생)
+- 모든 필드 옵셔널이라 기존 검증 로직(`isValidWorkspaceRecord`, `isMemo`)과
+  생성 함수는 수정 없이 그대로 통과. 필드를 실제로 읽거나 쓰는 로직은
+  추가하지 않음 (타입만 존재)
+- 브랜치: `refactor/add-persisted-meta`
+
+**커밋 4a — memo 순수 헬퍼 함수 분리**
+- `formatMemoDate`, `getMemoProviderLabel`, `getMemoDisplayTitle`,
+  `isNavigableProvider`, `getSourceHint`를
+  `features/memos/memoUtils.ts`로 이동
+- `getMemoProviderLabel`이 참조하던 `PROVIDER_LABELS` 상수는 `main.tsx`에서
+  `providerLabels.ts`로 분리(순환 의존 방지 — memoUtils가 main.tsx를 직접
+  import하지 않도록)
+- 브랜치: `refactor/extract-memo-utils`
+
+**커밋 4b — MemoCard 컴포넌트 분리**
+- `main.tsx`의 `renderMemoCard` 클로저를 `features/memos/MemoCard.tsx`
+  컴포넌트로 분리. JSX 구조/className/문구는 diff로 한 줄씩 대조해 완전히
+  동일함 확인 (들여쓰기와 `key` 위치 변경만 차이)
+- `key={memo.id}`는 컴포넌트 내부가 아니라 `pinnedMemos.map`/
+  `unpinnedMemos.map` 호출부에서만 부여 (React list key 원칙)
+- 이 프로젝트가 `jsx: 'react-jsx'` 설정이라 `import React from 'react'`가
+  불필요함을 `SlotHeader.tsx` 사례로 확인, MemoCard.tsx에도 추가 안 함
+- `openMemoDetail`/`updateMemo`/`copyMemo`/`deleteMemo`는 memos state를
+  직접 참조하므로 main.tsx에 그대로 두고 props로 전달
+- 브랜치: `refactor/extract-memo-card`
+
+**의도적으로 멈춘 지점 (4c, 보류)**
+- 메모 페이지 레이아웃 전체와 상세 모달(`MemoDetailModal`)은 이번 라운드에서
+  분리하지 않기로 결정. 자세한 사유는 `docs/IN-PROGRESS.md`의 "[보류]
+  MemoPanel/MemoDetailModal 분리" 항목 참고 — 요약하면 `navigateToMemoSource`
+  핸들러가 `slots`/`dockIds`/`webviewRefs`(Stage/Dock 도메인)에 직접
+  의존해서, 지금 분리하면 Stage/Dock 분리 작업 때 다시 뜯어야 함
+
+**검증 방식**
+- 매 커밋마다: 작업 전 `git status`/브랜치 확인 → Codex 작업 → src.zip
+  업로드 → Claude가 zip을 직접 풀어 코드 레벨로 diff 검증(보고된 압축
+  diff/diffstat을 그대로 믿지 않고 원본과 바이트 단위 비교) → 통과 시
+  사용자가 직접 커밋/push/머지
+- 중간에 브랜치 머지 누락 1건 발생(`refactor/add-entitlement` 위에서 커밋
+  2 작업을 이어서 진행) — 발견 즉시 새 브랜치로 분리해 복구. 이후 머지
+  순서를 매번 명확히 안내하는 절차로 보완
+
 ## 2026-06-29 — "Claude 고장/워크스테이션 소실"의 진짜 원인 발견 (포트 충돌)
 npm run dev 좀비 프로세스가 5173 포트 점유 → Vite가 5174로 밀림 → Electron은 하드코딩된 5173 계속 로드 시도 → 메인 윈도우/webview 전부 깨짐. lsof -ti:5173 | xargs kill -9로 해결됨. 1차/2차 시도 때 의심했던 groupStore.ts/workspaceStore.ts 코드는 무죄였다는 것도 명시
 
