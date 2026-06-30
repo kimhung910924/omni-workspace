@@ -4,6 +4,82 @@
 > 여기는 "현재 막혀있는 것" + "과거에 시도했다가 버린 접근법"만 남겨둔다.
 > 목적: 같은 방법을 또 시도하지 않게 막는 것 + 새 채팅에서 바로 이어갈 항목 확인.
 
+## [진행 중] Gemini 워크스테이션 재오픈 시 대화방 복원 실패
+
+### 현재 상태
+
+URL 저장/복원 코드는 무죄로 확인됨. 문제는 Gemini SPA 내부 라우터가
+그 URL을 열어주지 않는 타이밍/환경 문제로 좁혀진 상태.
+
+### 확인된 사실 (실측)
+
+- `localStorage.omni-workspaces`의 Gemini slot URL: 항상 정확한 딥링크
+  (`/app/{chatId}`, `/gem/{gemId}/{chatId}`)
+- webview `attrSrc` 및 `webview.getURL()`: 저장값과 항상 일치
+- "성공했을 때"와 "실패했을 때" 유일한 차이: `title`
+  (성공: 실제 대화 제목 예: `'Flash'`, 실패: 플레이스홀더
+  `'Gemini와의 대화'`)
+- 수동 새로고침으로 돌아올 때도 있고, 10번 이상 해도 안 될 때도 있음
+  → 타이밍 레이스이되, 단순 레이스가 아닐 가능성 있음
+
+---
+
+### 시도했으나 효과 없었던 것들
+
+**우리 코드 측 수정 (유효한 수정으로 유지, 단 복원 문제 자체는 미해결)**
+- `src={slot.currentUrl}` → `src={initialWebviewSrc}` 피드백 루프 제거
+- ownerTabId 기반 `saveCurrentUrl`/`updateSlotTitle`
+- ref callback 무한루프 방지 (`!webview` 분기에서 `webviewRefCallbacks` 삭제 금지)
+- `tabs.flatMap` keep-mounted (탭 전환 시 webview unmount 방지)
+
+**복원 자체를 고치려 했으나 실패한 것들**
+- 자동 reload retry — 정상 렌더링 중인 화면을 끊어버릴 위험, 채택 안 함
+- `reloadIgnoringCache()` 자동화 — 안정적 해결책 아님
+- `about:blank` → `dom-ready` → `loadURL` 지연 로드 — 모든 provider
+  완전 먹통 회귀. **이 방향 재시도 금지**
+- two-phase warmup (`/app` 먼저 → 딥링크) — 실패
+- targeted warmup (`/gem/{gemId}` 먼저 → `/gem/{gemId}/{chatId}`) — 실패
+- anchor-click soft navigation (가짜 `<a>` 태그 click) — 실패
+- Gemini single-live-instance (동시에 webview 1개만 DOM 유지) —
+  webview 개수 제어는 성공, 복원 실패는 그대로
+
+---
+
+### 아직 시도 안 한 것들 (다음 후보)
+
+- **`webview.getTitle()` 기반 판정 후 재시도**
+  `did-finish-load` 직후 `webview.getTitle()`이 플레이스홀더인지 확인해서
+  선택적으로 재로드. 단, `'Gemini와의 대화'`가 실제 정상 제목일 수도
+  있으므로 판정 기준 설계 주의 필요. `refreshGeminiSlotTitle`이 유사한
+  패턴을 이미 쓰고 있으니 참고.
+- **no-cache header loadURL**
+```ts
+  webview.loadURL(targetUrl, {
+    extraHeaders: 'Cache-Control: no-cache\nPragma: no-cache\n'
+  })
+```
+  이전 시도들과 조합해서 작게 실험 가능.
+- **Gemini 전용 partition 분리**
+  현재 모든 Gemini webview가 `persist:gemini`를 공유하는데, 워크스페이스별로
+  다른 partition을 쓰면 세션 격리로 SPA 상태가 꼬이는 걸 막을 수 있는지 실험.
+  단, 로그인 세션이 partition마다 따로 관리되는 부작용 있음.
+- **Gemini 전용 `WebContentsView` 이관 실험** (큰 작업, 장기 후보)
+  `<webview>` 태그 자체의 한계일 가능성에 대한 근본 대안.
+  Windows 한정, release-critical 항목들 끝난 뒤 재논의.
+
+---
+
+### 다음 시도 전 참고
+
+- `webview.getTitle()`은 `dom-ready` 직후엔 아직 갱신 안 됐을 수 있음
+  (타이밍 주의)
+- `'Gemini와의 대화'`는 플레이스홀더이기도 하지만 실제 정상 제목이기도 함
+  — 오탐 위험 있으므로 이걸 단독 판정 기준으로 쓰지 말 것
+- 단순 reload/reloadIgnoringCache 자동화는 "정상 렌더링 중인 화면을
+  끊어버릴 수 있다"는 구조적 결함이 있으므로, 재시도한다면 반드시
+  "성공 여부를 판단하는 신호"와 세트로 설계할 것
+
+
 ---
 ## [부분 해결, 4개 레이어 버그 진단/수정 완료 + 잔여 1건] Gemini 채팅 클릭/전환/재오픈 시 홈으로 튕기는 문제
 
