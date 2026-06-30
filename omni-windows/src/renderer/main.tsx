@@ -7,7 +7,15 @@ import { ProviderIcon } from './ProviderIcon';
 import { SlotHeader } from './SlotHeader';
 import { providerAdapters, type ProviderWebview, type SendResult } from './providerAdapters';
 import { getInitialProviderUrl, isRestorableUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
+import { PROVIDER_LABELS } from './providerLabels';
 import { createMemo } from './features/memos/memoStore';
+import {
+  formatMemoDate,
+  getMemoProviderLabel,
+  getMemoDisplayTitle,
+  isNavigableProvider,
+  getSourceHint,
+} from './features/memos/memoUtils';
 import { memoRepository } from './data/local/localMemoRepository';
 import { useEntitlement } from './entitlement/useEntitlement';
 import { getCurrentLanguage, initI18n, saveLanguagePreference, type SupportedLanguage } from './i18n';
@@ -117,14 +125,6 @@ const PROVIDERS: Array<{
     partition: window.omni?.perplexityPartition ?? 'persist:perplexity',
   },
 ];
-
-const PROVIDER_LABELS: Record<ProviderId, string> = {
-  claude: 'Claude',
-  chatgpt: 'ChatGPT',
-  gemini: 'Gemini',
-  grok: 'Grok',
-  perplexity: 'Perplexity',
-};
 
 function getProviderConfig(providerId: ProviderId) {
   return PROVIDERS.find((provider) => provider.id === providerId) ?? PROVIDERS[0];
@@ -273,51 +273,6 @@ function createGeminiTitleScript(): string {
       return isUsable(document.title) ? clean(document.title) : null;
     })();
   `;
-}
-
-function formatMemoDate(value: number): string {
-  return new Intl.DateTimeFormat('ko-KR', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value));
-}
-
-function getMemoProviderLabel(memo: Memo): string {
-  return memo.provider ? PROVIDER_LABELS[memo.provider] : 'Private';
-}
-
-function getMemoDisplayTitle(memo: Memo): string {
-  const title = memo.title.trim();
-
-  if (title) {
-    return title;
-  }
-
-  const contentTitle = memo.content.split(/\r?\n/).find(Boolean)?.trim().slice(0, 40);
-  return contentTitle || '새 메모';
-}
-
-function isNavigableProvider(provider: Memo['provider']): provider is ProviderId {
-  return provider === 'claude' || provider === 'chatgpt';
-}
-
-function getSourceHint(memo: Memo): string {
-  if (memo.sourceTitle) {
-    return memo.sourceTitle;
-  }
-
-  if (!memo.sourceUrl) {
-    return '';
-  }
-
-  try {
-    const url = new URL(memo.sourceUrl);
-    return `${url.hostname}${url.pathname === '/' ? '' : url.pathname}`;
-  } catch {
-    return memo.sourceUrl;
-  }
 }
 
 function getInitialActiveSlotId(group: Group): string {
