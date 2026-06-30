@@ -9,6 +9,7 @@ import { providerAdapters, type ProviderWebview, type SendResult } from './provi
 import { getInitialProviderUrl, isRestorableUrl, saveProviderUrl, type ProviderId } from './providerUrlStore';
 import { PROVIDER_LABELS } from './providerLabels';
 import { createMemo } from './features/memos/memoStore';
+import { MemoCard } from './features/memos/MemoCard';
 import {
   formatMemoDate,
   getMemoProviderLabel,
@@ -2028,65 +2029,6 @@ function App() {
     ]);
   }, []);
 
-  const renderMemoCard = (memo: Memo) => {
-    const sourceHint = getSourceHint(memo);
-    const providerLabel = getMemoProviderLabel(memo);
-
-    return (
-      <article
-        key={memo.id}
-        className={`memo-card provider-${memo.provider ?? 'manual'}`}
-        tabIndex={0}
-        onClick={() => openMemoDetail(memo)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            openMemoDetail(memo);
-          }
-        }}
-      >
-        <div className="memo-card-meta">
-          <span className={`memo-provider ${memo.provider ?? 'manual'}`}>
-            {memo.provider && <ProviderIcon providerId={memo.provider} label={providerLabel} className="memo-provider-icon" />}
-            {providerLabel}
-          </span>
-        </div>
-
-        <div className="memo-card-body">
-          <h4>{getMemoDisplayTitle(memo)}</h4>
-          <p className="memo-preview">{memo.content}</p>
-        </div>
-        <div className="memo-card-footer">
-          {sourceHint && <span className="memo-source">{sourceHint}</span>}
-          <span>{formatMemoDate(memo.createdAt)}</span>
-        </div>
-
-        <div className="memo-actions" onClick={(event) => event.stopPropagation()}>
-          <button
-            className="memo-action-button"
-            type="button"
-            title={memo.pinned ? '고정해제' : '고정'}
-            onClick={() =>
-              updateMemo(memo.id, (currentMemo) => ({
-                ...currentMemo,
-                pinned: !currentMemo.pinned,
-                updatedAt: Date.now(),
-              }))
-            }
-          >
-            {memo.pinned ? 'Unpin' : 'Pin'}
-          </button>
-          <button className="memo-action-button" type="button" title="복사" onClick={() => void copyMemo(memo.content)}>
-            Copy
-          </button>
-          <button className="memo-action-button danger" type="button" title="??젣" onClick={() => deleteMemo(memo.id)}>
-            Delete
-          </button>
-        </div>
-      </article>
-    );
-  };
-
   const goSlotBack = React.useCallback(
     (slotId: string) => {
       if (!navigationStates[slotId]?.canGoBack) {
@@ -2702,7 +2644,18 @@ function App() {
             <div className="memo-section">
               <h3>고정됨</h3>
               {pinnedMemos.length > 0 ? (
-                <div className="memo-grid">{pinnedMemos.map(renderMemoCard)}</div>
+                <div className="memo-grid">
+                  {pinnedMemos.map((memo) => (
+                    <MemoCard
+                      key={memo.id}
+                      memo={memo}
+                      onOpenDetail={openMemoDetail}
+                      onUpdate={updateMemo}
+                      onCopy={copyMemo}
+                      onDelete={deleteMemo}
+                    />
+                  ))}
+                </div>
               ) : (
                 <p className="memo-empty">고정된 메모가 없습니다.</p>
               )}
@@ -2711,7 +2664,18 @@ function App() {
             <div className="memo-section">
               <h3>메모</h3>
               {unpinnedMemos.length > 0 ? (
-                <div className="memo-grid">{unpinnedMemos.map(renderMemoCard)}</div>
+                <div className="memo-grid">
+                  {unpinnedMemos.map((memo) => (
+                    <MemoCard
+                      key={memo.id}
+                      memo={memo}
+                      onOpenDetail={openMemoDetail}
+                      onUpdate={updateMemo}
+                      onCopy={copyMemo}
+                      onDelete={deleteMemo}
+                    />
+                  ))}
+                </div>
               ) : (
                 <p className="memo-empty">저장된 메모가 없습니다.</p>
               )}
