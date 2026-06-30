@@ -77,6 +77,7 @@ type Tab = GroupTab | WorkspaceTab;
 
 type SidebarView = 'workspace-panel' | 'prompt-library' | null;
 type DropPosition = { targetId: string | null; side: 'before' | 'after' | null };
+type MemoProviderFilter = Memo['provider'];
 type StagePointerDrag = {
   id: string;
   startX: number;
@@ -88,6 +89,15 @@ type StagePointerDrag = {
 
 const MAX_TABS_NOTICE = '상단탭이 꽉 찼습니다. 상단탭 자리 확보 후 다시 시도해주세요.';
 const DEFAULT_STARTUP_PROVIDER_IDS: ProviderId[] = ['claude', 'chatgpt', 'gemini'];
+const MEMO_PROVIDER_FILTER_OPTIONS: Array<{ provider: MemoProviderFilter; label: string }> = [
+  { provider: null, label: 'Private' },
+  { provider: 'gemini', label: PROVIDER_LABELS.gemini },
+  { provider: 'claude', label: PROVIDER_LABELS.claude },
+  { provider: 'chatgpt', label: PROVIDER_LABELS.chatgpt },
+  { provider: 'perplexity', label: PROVIDER_LABELS.perplexity },
+  { provider: 'grok', label: PROVIDER_LABELS.grok },
+];
+const DEFAULT_MEMO_PROVIDER_FILTERS = MEMO_PROVIDER_FILTER_OPTIONS.map((option) => option.provider);
 
 const PROVIDERS: Array<{
   id: ProviderId;
@@ -310,6 +320,10 @@ function App() {
   const [workspaceRenameError, setWorkspaceRenameError] = React.useState('');
   const [memoPanelOpen, setMemoPanelOpen] = React.useState(false);
   const [memoSearch, setMemoSearch] = React.useState('');
+  const [selectedMemoProviders, setSelectedMemoProviders] = React.useState<MemoProviderFilter[]>(() => [
+    ...DEFAULT_MEMO_PROVIDER_FILTERS,
+  ]);
+  const [memoResultsMinHeight, setMemoResultsMinHeight] = React.useState(0);
   const [manualMemoText, setManualMemoText] = React.useState('');
   const [editingMemoId, setEditingMemoId] = React.useState<string | null>(null);
   const [editingTitle, setEditingTitle] = React.useState('');
@@ -330,6 +344,7 @@ function App() {
   const webviewRefs = React.useRef<Partial<Record<string, ProviderWebview>>>({});
   const webviewReadyRef = React.useRef<Partial<Record<string, boolean>>>({});
   const webviewRefCallbacks = React.useRef<Partial<Record<string, (webview: TrackedProviderWebview | null) => void>>>({});
+  const memoResultsRef = React.useRef<HTMLDivElement | null>(null);
   const draggedIdRef = React.useRef<string | null>(null);
   const htmlDragSourceRef = React.useRef<'stage' | 'dock' | null>(null);
   const lastDragPreviewRef = React.useRef<string | null>(null);
@@ -506,6 +521,7 @@ function App() {
 
   const pinnedMemos = sortedMemos.filter((memo) => memo.pinned);
   const unpinnedMemos = sortedMemos.filter((memo) => !memo.pinned);
+  const filteredUnpinnedMemos = unpinnedMemos.filter((memo) => selectedMemoProviders.includes(memo.provider));
   const selectedMemo = selectedMemoId ? (memos.find((memo) => memo.id === selectedMemoId) ?? null) : null;
 
   const updateSlotNavigationState = React.useCallback((slotId: string) => {
@@ -2029,6 +2045,25 @@ function App() {
     ]);
   }, []);
 
+  const selectAllMemoProviders = React.useCallback(() => {
+    setMemoResultsMinHeight(0);
+    setSelectedMemoProviders([...DEFAULT_MEMO_PROVIDER_FILTERS]);
+  }, []);
+
+  const clearAllMemoProviders = React.useCallback(() => {
+    setMemoResultsMinHeight(memoResultsRef.current?.getBoundingClientRect().height ?? 0);
+    setSelectedMemoProviders([]);
+  }, []);
+
+  const toggleMemoProvider = React.useCallback((provider: MemoProviderFilter) => {
+    setMemoResultsMinHeight(0);
+    setSelectedMemoProviders((currentProviders) =>
+      currentProviders.includes(provider)
+        ? currentProviders.filter((currentProvider) => currentProvider !== provider)
+        : [...currentProviders, provider],
+    );
+  }, []);
+
   const goSlotBack = React.useCallback(
     (slotId: string) => {
       if (!navigationStates[slotId]?.canGoBack) {
@@ -2663,22 +2698,61 @@ function App() {
 
             <div className="memo-section">
               <h3>메모</h3>
-              {unpinnedMemos.length > 0 ? (
-                <div className="memo-grid">
-                  {unpinnedMemos.map((memo) => (
-                    <MemoCard
-                      key={memo.id}
-                      memo={memo}
-                      onOpenDetail={openMemoDetail}
-                      onUpdate={updateMemo}
-                      onCopy={copyMemo}
-                      onDelete={deleteMemo}
-                    />
-                  ))}
+              <div className="memo-provider-filter" aria-label="메모 출처 필터">
+                <button className="memo-filter-command" type="button" onClick={selectAllMemoProviders}>
+                  모두 선택
+                </button>
+                <button className="memo-filter-command" type="button" onClick={clearAllMemoProviders}>
+                  모두해제
+                </button>
+                <div className="memo-provider-filter-options">
+                  {MEMO_PROVIDER_FILTER_OPTIONS.map((option) => {
+                    const isSelected = selectedMemoProviders.includes(option.provider);
+
+                    return (
+                      <button
+                        key={option.provider ?? 'private'}
+                        className={`memo-provider-filter-button ${isSelected ? 'active' : ''}`}
+                        type="button"
+                        aria-pressed={isSelected}
+                        title={option.label}
+                        onClick={() => toggleMemoProvider(option.provider)}
+                      >
+                        {option.provider ? (
+                          <ProviderIcon providerId={option.provider} label={option.label} />
+                        ) : (
+                          <span className="memo-private-filter-icon" aria-hidden="true">
+                            P
+                          </span>
+                        )}
+                        <span>{option.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-              ) : (
-                <p className="memo-empty">저장된 메모가 없습니다.</p>
-              )}
+              </div>
+              <div
+                ref={memoResultsRef}
+                className="memo-results"
+                style={{ minHeight: memoResultsMinHeight || undefined }}
+              >
+                {filteredUnpinnedMemos.length > 0 ? (
+                  <div className="memo-grid">
+                    {filteredUnpinnedMemos.map((memo) => (
+                      <MemoCard
+                        key={memo.id}
+                        memo={memo}
+                        onOpenDetail={openMemoDetail}
+                        onUpdate={updateMemo}
+                        onCopy={copyMemo}
+                        onDelete={deleteMemo}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="memo-empty">저장된 메모가 없습니다.</p>
+                )}
+              </div>
             </div>
           </div>
         </section>
