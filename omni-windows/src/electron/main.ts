@@ -9,9 +9,17 @@ const CHATGPT_PARTITION = 'persist:chatgpt';
 const GEMINI_PARTITION = 'persist:gemini';
 const GROK_PARTITION = 'persist:grok';
 const PERPLEXITY_PARTITION = 'persist:perplexity';
+const WEBSLOT_PARTITION = 'persist:webslot';
 const WEBVIEW_CAPTURE_PRELOAD_PATH = path.join(__dirname, 'webviewCapture.cjs');
 const WEBVIEW_CAPTURE_PRELOAD_URL = pathToFileURL(WEBVIEW_CAPTURE_PRELOAD_PATH).toString();
-const PROVIDER_PARTITIONS = [CLAUDE_PARTITION, CHATGPT_PARTITION, GEMINI_PARTITION, GROK_PARTITION, PERPLEXITY_PARTITION] as const;
+const PROVIDER_PARTITIONS = [
+  CLAUDE_PARTITION,
+  CHATGPT_PARTITION,
+  GEMINI_PARTITION,
+  GROK_PARTITION,
+  PERPLEXITY_PARTITION,
+  WEBSLOT_PARTITION,
+] as const;
 const ELECTRON_USER_AGENT_TOKEN = /\sElectron\/\S+/g;
 
 function createDesktopChromeUserAgent(userAgent: string): string {
@@ -58,8 +66,10 @@ app.whenReady().then(() => {
   ipcMain.handle('omni:get-webview-capture-preload-url', () => WEBVIEW_CAPTURE_PRELOAD_URL);
   ipcMain.handle('omni:get-app-locale', () => app.getLocale());
   app.on('web-contents-created', (_event, contents) => {
-    contents.on('will-attach-webview', (_attachEvent, webPreferences) => {
-      webPreferences.preload = WEBVIEW_CAPTURE_PRELOAD_PATH;
+    contents.on('will-attach-webview', (_attachEvent, webPreferences, params) => {
+      if (params['data-omni-slot-kind'] === 'ai') {
+        webPreferences.preload = WEBVIEW_CAPTURE_PRELOAD_PATH;
+      }
     });
 
     if (contents.getType() === 'webview') {

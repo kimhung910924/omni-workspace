@@ -22,7 +22,7 @@ import { useEntitlement } from './entitlement/useEntitlement';
 import { getCurrentLanguage, initI18n, saveLanguagePreference, type SupportedLanguage } from './i18n';
 import { workspaceRepository } from './data/local/localWorkspaceRepository';
 import type { Memo } from './features/memos/types';
-import type { Group, Slot, WorkspaceRecord } from './types';
+import { isAiSlot, type Group, type ProviderSlot, type Slot, type WebSlot, type WorkspaceRecord } from './types';
 
 type WebviewNavigationEvent = Event & {
   url?: string;
@@ -136,6 +136,7 @@ const PROVIDERS: Array<{
     partition: window.omni?.perplexityPartition ?? 'persist:perplexity',
   },
 ];
+const WEB_SLOT_PARTITION = window.omni?.webSlotPartition ?? 'persist:webslot';
 
 function getProviderConfig(providerId: ProviderId) {
   return PROVIDERS.find((provider) => provider.id === providerId) ?? PROVIDERS[0];
@@ -145,25 +146,82 @@ function createId(): string {
   return crypto.randomUUID();
 }
 
-function createInitialSlot(providerId: ProviderId): Slot {
+function normalizeWebUrl(input: string): string | null {
+  const trimmedInput = input.trim();
+
+  if (!trimmedInput) {
+    return null;
+  }
+
+  const urlWithProtocol = /^https?:\/\//i.test(trimmedInput) ? trimmedInput : `https://${trimmedInput}`;
+
+  try {
+    const parsedUrl = new URL(urlWithProtocol);
+
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      return null;
+    }
+
+    return parsedUrl.toString();
+  } catch {
+    return null;
+  }
+}
+
+function getWebSlotIconUrl(url: string): string {
+  try {
+    const hostname = new URL(url).hostname;
+    return `https://www.google.com/s2/favicons?domain=${hostname}&sz=64`;
+  } catch {
+    return '';
+  }
+}
+
+function isHttpOrHttpsUrl(url: string): boolean {
+  try {
+    const parsedUrl = new URL(url);
+    return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function createInitialSlot(providerId: ProviderId): ProviderSlot {
   const provider = getProviderConfig(providerId);
 
   return {
     id: createId(),
+    kind: 'ai',
     providerId,
     currentUrl: getInitialProviderUrl({ id: provider.id, defaultUrl: provider.defaultUrl }),
     title: provider.label,
   };
 }
 
-function createNewSlot(providerId: ProviderId): Slot {
+function createNewSlot(providerId: ProviderId): ProviderSlot {
   const provider = getProviderConfig(providerId);
 
   return {
     id: createId(),
+    kind: 'ai',
     providerId,
     currentUrl: provider.defaultUrl,
     title: provider.label,
+  };
+}
+
+function createNewWebSlot(url: string): WebSlot | null {
+  const normalizedUrl = normalizeWebUrl(url);
+
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  return {
+    id: createId(),
+    kind: 'web',
+    currentUrl: normalizedUrl,
+    title: new URL(normalizedUrl).hostname,
   };
 }
 
@@ -304,6 +362,7 @@ function App() {
   const [sidebarView, setSidebarView] = React.useState<SidebarView>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = React.useState(false);
   const [addSlotModalOpen, setAddSlotModalOpen] = React.useState(false);
+  const [addWebSlotUrl, setAddWebSlotUrl] = React.useState('https://docs.google.com/');
   const [newTabModalOpen, setNewTabModalOpen] = React.useState(false);
   const [newTabWorkspaceListOpen, setNewTabWorkspaceListOpen] = React.useState(false);
   const [workspacePromotionOpen, setWorkspacePromotionOpen] = React.useState(false);
@@ -356,7 +415,11 @@ function App() {
     try {
       const liveUrl = webview.getURL?.();
 
-      if (liveUrl && isRestorableUrl(slot.providerId, liveUrl)) {
+      if (liveUrl && isAiSlot(slot) && isRestorableUrl(slot.providerId, liveUrl)) {
+        return liveUrl;
+      }
+
+      if (liveUrl && slot.kind === 'web' && isHttpOrHttpsUrl(liveUrl)) {
         return liveUrl;
       }
     } catch {
@@ -401,7 +464,7 @@ function App() {
   const stageSlots = React.useMemo(() => stageIds.map((slotId) => slotsById.get(slotId)).filter(Boolean) as Slot[], [slotsById, stageIds]);
   const dockSlots = React.useMemo(() => dockIds.map((slotId) => slotsById.get(slotId)).filter(Boolean) as Slot[], [dockIds, slotsById]);
   const activeSlot = slotsById.get(activeSlotId) ?? stageSlots[0] ?? slots[0] ?? null;
-  const activeProvider = activeSlot ? getProviderConfig(activeSlot.providerId) : PROVIDERS[0];
+  const activeProvider = activeSlot && isAiSlot(activeSlot) ? getProviderConfig(activeSlot.providerId) : null;
   const isStageGrid = stageIds.length === MAX_STAGE_SLOTS && layoutMode === 'grid2x2';
   const stageGridStyle = React.useMemo<React.CSSProperties>(
     () => ({
@@ -656,7 +719,7 @@ function App() {
 
   const attachNavigationTracker = React.useCallback(
     (slot: Slot, ownerTabId: string) => (webview: TrackedProviderWebview | null) => {
-      const { id: slotId, providerId } = slot;
+      const slotId = slot.id;
 
       if (!webview) {
         delete webviewRefs.current[slotId];
@@ -674,12 +737,17 @@ function App() {
         });
 
         const saveCurrentUrl = (event: WebviewNavigationEvent) => {
+          if (event.isMainFrame === false) {
+            updateSlotNavigationState(slotId);
+            return;
+          }
+
           const navigatedUrl = event.url ?? webview.getURL?.();
 
-          if (navigatedUrl) {
-            saveProviderUrl(providerId, navigatedUrl);
+          if (navigatedUrl && isAiSlot(slot)) {
+            saveProviderUrl(slot.providerId, navigatedUrl);
 
-            if (isRestorableUrl(providerId, navigatedUrl)) {
+            if (isRestorableUrl(slot.providerId, navigatedUrl)) {
               setTabs((currentTabs) =>
                 currentTabs.map((tab) => {
                   if (tab.id !== ownerTabId) {
@@ -706,9 +774,33 @@ function App() {
             }
           }
 
+          if (navigatedUrl && slot.kind === 'web' && isHttpOrHttpsUrl(navigatedUrl)) {
+            setTabs((currentTabs) =>
+              currentTabs.map((tab) => {
+                if (tab.id !== ownerTabId) {
+                  return tab;
+                }
+
+                const currentSlot = tab.group.slots.find((slot) => slot.id === slotId);
+
+                if (currentSlot?.currentUrl === navigatedUrl) {
+                  return tab;
+                }
+
+                return {
+                  ...tab,
+                  group: {
+                    ...tab.group,
+                    slots: tab.group.slots.map((slot) => (slot.id === slotId ? { ...slot, currentUrl: navigatedUrl } : slot)),
+                  },
+                };
+              }),
+            );
+          }
+
           updateSlotNavigationState(slotId);
 
-          if (providerId === 'gemini') {
+          if (isAiSlot(slot) && slot.providerId === 'gemini') {
             refreshGeminiSlotTitle(slotId, ownerTabId, webview);
           }
         };
@@ -718,14 +810,15 @@ function App() {
         webview.addEventListener('did-finish-load', () => {
           updateSlotNavigationState(slotId);
 
-          if (providerId === 'gemini') {
+          if (isAiSlot(slot) && slot.providerId === 'gemini') {
             refreshGeminiSlotTitle(slotId, ownerTabId, webview);
           }
         });
         webview.addEventListener('page-title-updated', (event: Event & { title?: string }) => {
-          const title = typeof event.title === 'string' && event.title.trim() ? event.title.trim() : getProviderConfig(providerId).label;
+          const fallbackTitle = isAiSlot(slot) ? getProviderConfig(slot.providerId).label : slot.title;
+          const title = typeof event.title === 'string' && event.title.trim() ? event.title.trim() : fallbackTitle;
 
-          if (providerId === 'gemini' && !isMeaningfulGeminiTitle(title)) {
+          if (isAiSlot(slot) && slot.providerId === 'gemini' && !isMeaningfulGeminiTitle(title)) {
             refreshGeminiSlotTitle(slotId, ownerTabId, webview);
             return;
           }
@@ -743,7 +836,7 @@ function App() {
         webview.dataset.omniTrackedSlot = slotId;
       }
 
-      if (webview.dataset.omniMemoSlot !== slotId) {
+      if (isAiSlot(slot) && webview.dataset.omniMemoSlot !== slotId) {
         webview.addEventListener('ipc-message', (event: WebviewIpcMessageEvent) => {
           if (event.channel !== 'omni-save-memo') {
             return;
@@ -762,7 +855,7 @@ function App() {
           setMemos((currentMemos) => [
             createMemo({
               content: text,
-              provider: providerId,
+              provider: slot.providerId,
               sourceUrl,
               sourceTitle,
             }),
@@ -797,17 +890,18 @@ function App() {
       }
 
       const messageText = broadcastText;
+      const targetSlots = stageSlots.filter(isAiSlot);
 
       setBroadcastStatuses((currentStatuses) => {
         const nextStatuses = { ...currentStatuses };
-        stageSlots.forEach((slot) => {
+        targetSlots.forEach((slot) => {
           nextStatuses[slot.id] = { state: 'pending', message: 'Sending...' };
         });
         return nextStatuses;
       });
 
       const settledResults = await Promise.allSettled(
-        stageSlots.map(async (slot): Promise<SendResult> => {
+        targetSlots.map(async (slot): Promise<SendResult> => {
           const provider = getProviderConfig(slot.providerId);
           const webview = webviewRefs.current[slot.id];
 
@@ -827,7 +921,7 @@ function App() {
       const nextStatuses = { ...broadcastStatuses };
 
       settledResults.forEach((result, index) => {
-        const slot = stageSlots[index];
+        const slot = targetSlots[index];
         const provider = getProviderConfig(slot.providerId);
 
         if (result.status === 'rejected') {
@@ -1972,6 +2066,7 @@ function App() {
   }, [clearSlotNavigationState, setGroup, slots]);
 
   const handleAddSlot = React.useCallback(() => {
+    setAddWebSlotUrl('https://docs.google.com/');
     setAddSlotModalOpen(true);
   }, []);
 
@@ -1981,6 +2076,47 @@ function App() {
     }
 
     const newSlot = createNewSlot(providerId);
+
+    setGroup((currentGroup) => {
+      const goesToStage = currentGroup.stageIds.length < MAX_STAGE_SLOTS;
+
+      return {
+        ...currentGroup,
+        slots: [...currentGroup.slots, newSlot],
+        stageIds: goesToStage ? [...currentGroup.stageIds, newSlot.id] : currentGroup.stageIds,
+        dockIds: goesToStage ? currentGroup.dockIds : [...currentGroup.dockIds, newSlot.id],
+      };
+    });
+    setNavigationStates((current) => ({
+      ...current,
+      [newSlot.id]: { canGoBack: false, canGoForward: false, isDomReady: false },
+    }));
+    setBroadcastStatuses((current) => ({
+      ...current,
+      [newSlot.id]: { state: 'idle', message: 'Ready' },
+    }));
+    setAddSlotModalOpen(false);
+  }, [group.slots.length, setGroup]);
+
+  const handleConfirmAddWebSlot = React.useCallback((url: string) => {
+    if (group.slots.length >= MAX_SLOTS) {
+      setNavigationNotice('슬롯이 꽉 찼습니다.');
+      return;
+    }
+
+    const normalizedUrl = normalizeWebUrl(url);
+
+    if (!normalizedUrl) {
+      setNavigationNotice('올바른 http/https URL을 입력하세요.');
+      return;
+    }
+
+    const newSlot = createNewWebSlot(normalizedUrl);
+
+    if (!newSlot) {
+      setNavigationNotice('올바른 http/https URL을 입력하세요.');
+      return;
+    }
 
     setGroup((currentGroup) => {
       const goesToStage = currentGroup.stageIds.length < MAX_STAGE_SLOTS;
@@ -2088,7 +2224,7 @@ function App() {
       return;
     }
 
-    const sourceSlot = slots.find((slot) => slot.providerId === memo.provider);
+    const sourceSlot = slots.find((slot): slot is ProviderSlot => isAiSlot(slot) && slot.providerId === memo.provider);
 
     if (!sourceSlot) {
       return;
@@ -2170,7 +2306,28 @@ function App() {
   }, []);
 
   const startSlotNewChat = React.useCallback((slot: Slot) => {
+    if (!isAiSlot(slot)) {
+      reloadSlot(slot.id);
+      return;
+    }
+
     webviewRefs.current[slot.id]?.loadURL?.(providerAdapters[slot.providerId].newChatUrl);
+  }, [reloadSlot]);
+
+  const handleWebSlotAddressSubmit = React.useCallback((slotId: string, url: string) => {
+    const normalizedUrl = normalizeWebUrl(url);
+
+    if (!normalizedUrl) {
+      setNavigationNotice('올바른 http/https URL을 입력하세요.');
+      return;
+    }
+
+    try {
+      webviewRefs.current[slotId]?.loadURL?.(normalizedUrl);
+      setNavigationNotice('');
+    } catch {
+      setNavigationNotice('웹슬롯 주소를 열 수 없습니다.');
+    }
   }, []);
 
   const sidebarPlaceholderTitle =
@@ -2322,7 +2479,7 @@ function App() {
               +
             </button>
           </div>
-          <div className="session-hint">Persistent session: {activeProvider.partition}</div>
+          <div className="session-hint">Persistent session: {activeProvider?.partition ?? WEB_SLOT_PARTITION}</div>
           {activeTab.kind === 'group' && (
             <button className="topbar-workspace-action" type="button" onClick={openWorkspacePromotion}>
               Save as workstation
@@ -2387,13 +2544,18 @@ function App() {
                     previewSlots.length > 0 ? (
                       <div className="workspace-preview-chip-list">
                         {previewSlots.map((slot) => {
-                          const provider = getProviderConfig(slot.providerId);
+                          const label = isAiSlot(slot) ? getProviderConfig(slot.providerId).label : slot.title;
+                          const webIconUrl = slot.kind === 'web' ? getWebSlotIconUrl(slot.currentUrl) : '';
 
                           return (
                             <span key={slot.id} className="workspace-preview-chip">
-                              <ProviderIcon providerId={slot.providerId} label={provider.label} />
+                              {isAiSlot(slot) ? (
+                                <ProviderIcon providerId={slot.providerId} label={label} />
+                              ) : (
+                                <img src={webIconUrl} alt="" aria-hidden="true" />
+                              )}
                               <span className="workspace-preview-chip-text">
-                                <span className="workspace-preview-provider">{provider.label}</span>
+                                <span className="workspace-preview-provider">{label}</span>
                                 <span className="workspace-preview-title">{slot.title}</span>
                               </span>
                             </span>
@@ -2535,7 +2697,10 @@ function App() {
                 {stageIds.length === 0 && <div className="stage-empty">Open a docked slot to start.</div>}
                 {tabs.flatMap((ownerTab) =>
                   ownerTab.group.slots.map((slot) => {
-                    const provider = getProviderConfig(slot.providerId);
+                    const provider = isAiSlot(slot) ? getProviderConfig(slot.providerId) : null;
+                    const slotLabel = provider?.label ?? slot.title;
+                    const partition = provider?.partition ?? WEB_SLOT_PARTITION;
+                    const preload = isAiSlot(slot) && webviewCapturePreloadUrl?.startsWith('file:') ? webviewCapturePreloadUrl : undefined;
                     const isOwnerActive = ownerTab.id === activeTabId;
                     const ownerStageIds = ownerTab.group.stageIds;
                     const stageIndex = ownerStageIds.indexOf(slot.id);
@@ -2560,8 +2725,11 @@ function App() {
                         style={{ display: isVisible ? undefined : 'none', order: isVisible ? stageIndex : undefined }}
                       >
                         <SlotHeader
-                          providerId={slot.providerId}
-                          label={provider.label}
+                          kind={slot.kind}
+                          providerId={isAiSlot(slot) ? slot.providerId : undefined}
+                          label={slotLabel}
+                          addressValue={slot.currentUrl}
+                          onAddressSubmit={(url) => handleWebSlotAddressSubmit(slot.id, url)}
                           compact={ownerStageIds.length === MAX_STAGE_SLOTS && !isStageGrid}
                           canGoBack={navigationState.canGoBack}
                           canGoForward={navigationState.canGoForward}
@@ -2587,8 +2755,9 @@ function App() {
                         <webview
                           className="provider-webview"
                           src={initialWebviewSrc}
-                          partition={provider.partition}
-                          preload={webviewCapturePreloadUrl?.startsWith('file:') ? webviewCapturePreloadUrl : undefined}
+                          partition={partition}
+                          preload={preload}
+                          data-omni-slot-kind={slot.kind}
                           allowpopups={'true' as unknown as boolean}
                           ref={getSlotWebviewRef(slot, ownerTab.id)}
                         />
@@ -2651,7 +2820,8 @@ function App() {
             </div>
             <div className="dock-list">
               {dockSlots.map((slot) => {
-                const provider = getProviderConfig(slot.providerId);
+                const label = isAiSlot(slot) ? getProviderConfig(slot.providerId).label : slot.title;
+                const webIconUrl = slot.kind === 'web' ? getWebSlotIconUrl(slot.currentUrl) : '';
 
                 return (
                   <div
@@ -2661,7 +2831,7 @@ function App() {
                     role="button"
                     tabIndex={0}
                     draggable
-                    title={`${provider.label} - ${slot.title}`}
+                    title={`${label} - ${slot.title}`}
                     onDragStart={(event) => handleSlotDragStart(slot.id, event)}
                     onDragEnd={handleSlotDragEnd}
                     onDragOver={(event) => handleSlotDragOver('dock', slot.id, event)}
@@ -2674,10 +2844,14 @@ function App() {
                       }
                     }}
                   >
-                    <ProviderIcon providerId={slot.providerId} label={provider.label} />
+                    {isAiSlot(slot) ? (
+                      <ProviderIcon providerId={slot.providerId} label={label} />
+                    ) : (
+                      <img src={webIconUrl} alt="" aria-hidden="true" />
+                    )}
                     {!dockMinimized && (
                       <span className="dock-chip-text">
-                        <span className="dock-chip-provider">{provider.label}</span>
+                        <span className="dock-chip-provider">{label}</span>
                         <span className="dock-chip-title">{slot.title}</span>
                       </span>
                     )}
@@ -2856,19 +3030,33 @@ function App() {
                   ×
                 </button>
               </header>
-              <div className="add-slot-provider-list">
-                {PROVIDERS.map((provider) => (
-                  <button
-                    key={provider.id}
-                    className="add-slot-provider-button"
-                    type="button"
-                    onClick={() => handleConfirmAddSlot(provider.id)}
-                  >
-                    <ProviderIcon providerId={provider.id} label={provider.label} />
-                    <span>{provider.label}</span>
-                  </button>
-                ))}
-              </div>
+              <section>
+                <div className="add-slot-provider-list">
+                  {PROVIDERS.map((provider) => (
+                    <button
+                      key={provider.id}
+                      className="add-slot-provider-button"
+                      type="button"
+                      onClick={() => handleConfirmAddSlot(provider.id)}
+                    >
+                      <ProviderIcon providerId={provider.id} label={provider.label} />
+                      <span>{provider.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+              <section>
+                <h3>웹슬롯 추가</h3>
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    handleConfirmAddWebSlot(addWebSlotUrl);
+                  }}
+                >
+                  <input type="text" value={addWebSlotUrl} onChange={(event) => setAddWebSlotUrl(event.target.value)} />
+                  <button type="submit">추가</button>
+                </form>
+              </section>
             </section>
           </div>
         )}

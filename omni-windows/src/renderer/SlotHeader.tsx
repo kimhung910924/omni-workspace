@@ -1,10 +1,14 @@
+import React from 'react';
 import type { MouseEventHandler, PointerEventHandler } from 'react';
 import type { ProviderId } from './providerUrlStore';
 import { ProviderIcon } from './ProviderIcon';
 
 type SlotHeaderProps = {
-  providerId: ProviderId;
+  kind: 'ai' | 'web';
+  providerId?: ProviderId;
   label: string;
+  addressValue?: string;
+  onAddressSubmit?: (url: string) => void;
   compact?: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
@@ -69,8 +73,11 @@ function MinimizeIcon() {
 }
 
 export function SlotHeader({
+  kind,
   providerId,
   label,
+  addressValue,
+  onAddressSubmit,
   compact = false,
   canGoBack,
   canGoForward,
@@ -84,6 +91,16 @@ export function SlotHeader({
   onPointerDown,
   onClickCapture,
 }: SlotHeaderProps) {
+  const [draft, setDraft] = React.useState(addressValue ?? '');
+
+  React.useEffect(() => {
+    setDraft(addressValue ?? '');
+  }, [addressValue]);
+
+  const submitAddress = React.useCallback(() => {
+    onAddressSubmit?.(draft.trim());
+  }, [draft, onAddressSubmit]);
+
   return (
     <div className={`slot-header ${compact ? 'compact' : ''}`} onPointerDown={onPointerDown} onClickCapture={onClickCapture}>
       <div className="slot-header-group slot-header-nav" aria-label={`${label} navigation`}>
@@ -106,8 +123,26 @@ export function SlotHeader({
       </div>
 
       <div className="slot-provider">
-        <ProviderIcon providerId={providerId} label={label} />
-        <span className="slot-provider-label">{label}</span>
+        {kind === 'web' ? (
+          <input
+            type="text"
+            value={draft}
+            aria-label={`${label} address`}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={submitAddress}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                submitAddress();
+              }
+            }}
+          />
+        ) : (
+          <>
+            {providerId && <ProviderIcon providerId={providerId} label={label} />}
+            <span className="slot-provider-label">{label}</span>
+          </>
+        )}
       </div>
 
       <div className="slot-header-group slot-header-window" aria-label={`${label} slot actions`}>

@@ -1,36 +1,59 @@
 import type { LayoutMode, Slot, WorkspaceRecord } from '../../types';
+import type { ProviderId } from '../../providerUrlStore';
 import type { WorkspaceRepository } from '../repositories';
 
 const STORAGE_KEY = 'omni-workspaces';
 const MAX_WORKSPACES = 8;
 
-function isValidSlot(value: unknown): value is Slot {
+function normalizeSlot(value: unknown): Slot | null {
   if (!value || typeof value !== 'object') {
-    return false;
+    return null;
   }
 
-  const slot = value as Partial<Slot>;
+  const slot = value as Partial<Slot> & { providerId?: unknown; kind?: unknown };
 
-  return (
-    typeof slot.id === 'string' &&
-    typeof slot.providerId === 'string' &&
-    typeof slot.currentUrl === 'string' &&
-    typeof slot.title === 'string'
-  );
+  if (slot.kind === 'web') {
+    if (typeof slot.id !== 'string' || typeof slot.currentUrl !== 'string' || typeof slot.title !== 'string') {
+      return null;
+    }
+
+    return {
+      id: slot.id,
+      kind: 'web',
+      currentUrl: slot.currentUrl,
+      title: slot.title,
+    };
+  }
+
+  if (
+    typeof slot.id !== 'string' ||
+    typeof slot.providerId !== 'string' ||
+    typeof slot.currentUrl !== 'string' ||
+    typeof slot.title !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    id: slot.id,
+    kind: 'ai',
+    providerId: slot.providerId as ProviderId,
+    currentUrl: slot.currentUrl,
+    title: slot.title,
+  };
 }
 
-function isValidWorkspaceRecord(value: unknown): value is WorkspaceRecord {
+function normalizeWorkspaceRecord(value: unknown): WorkspaceRecord | null {
   if (!value || typeof value !== 'object') {
-    return false;
+    return null;
   }
 
   const workspace = value as Partial<WorkspaceRecord>;
 
-  return (
+  if (
     typeof workspace.id === 'string' &&
     typeof workspace.name === 'string' &&
     Array.isArray(workspace.slots) &&
-    workspace.slots.every(isValidSlot) &&
     Array.isArray(workspace.stageIds) &&
     workspace.stageIds.every((id) => typeof id === 'string') &&
     Array.isArray(workspace.dockIds) &&
@@ -39,7 +62,21 @@ function isValidWorkspaceRecord(value: unknown): value is WorkspaceRecord {
     typeof workspace.dockMinimized === 'boolean' &&
     typeof workspace.createdAt === 'string' &&
     typeof workspace.updatedAt === 'string'
-  );
+  ) {
+    return {
+      id: workspace.id,
+      name: workspace.name,
+      slots: workspace.slots.map(normalizeSlot).filter((slot): slot is Slot => slot !== null),
+      stageIds: workspace.stageIds,
+      dockIds: workspace.dockIds,
+      layoutMode: workspace.layoutMode,
+      dockMinimized: workspace.dockMinimized,
+      createdAt: workspace.createdAt,
+      updatedAt: workspace.updatedAt,
+    };
+  }
+
+  return null;
 }
 
 function loadWorkspaceRecords(): WorkspaceRecord[] {
@@ -53,7 +90,7 @@ function loadWorkspaceRecords(): WorkspaceRecord[] {
     const parsedValue: unknown = JSON.parse(rawValue);
 
     if (Array.isArray(parsedValue)) {
-      return parsedValue.filter(isValidWorkspaceRecord);
+      return parsedValue.map(normalizeWorkspaceRecord).filter((workspace): workspace is WorkspaceRecord => workspace !== null);
     }
   } catch {
     return [];

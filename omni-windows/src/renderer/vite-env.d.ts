@@ -7,6 +7,7 @@ interface Window {
     geminiPartition: string;
     grokPartition: string;
     perplexityPartition: string;
+    webSlotPartition: string;
     getWebviewCapturePreloadUrl: () => Promise<string>;
     getAppLocale: () => Promise<string>;
   };

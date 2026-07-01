@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('omni', {
   geminiPartition: 'persist:gemini',
   grokPartition: 'persist:grok',
   perplexityPartition: 'persist:perplexity',
+  webSlotPartition: 'persist:webslot',
   getWebviewCapturePreloadUrl: () => ipcRenderer.invoke('omni:get-webview-capture-preload-url'),
   getAppLocale: () => ipcRenderer.invoke('omni:get-app-locale'),
 });
