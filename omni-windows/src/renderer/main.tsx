@@ -172,6 +172,36 @@ function normalizeWebUrl(input: string): string | null {
   }
 }
 
+function resolveWebSlotInput(input: string): string | null {
+  const trimmedInput = input.trim();
+
+  if (!trimmedInput) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(trimmedInput)) {
+    return normalizeWebUrl(trimmedInput);
+  }
+
+  if (/\s/.test(trimmedInput)) {
+    return `https://www.google.com/search?q=${encodeURIComponent(trimmedInput)}`;
+  }
+
+  const normalizedUrl = normalizeWebUrl(trimmedInput);
+
+  if (normalizedUrl) {
+    try {
+      if (new URL(normalizedUrl).hostname.includes('.')) {
+        return normalizedUrl;
+      }
+    } catch {
+      return `https://www.google.com/search?q=${encodeURIComponent(trimmedInput)}`;
+    }
+  }
+
+  return `https://www.google.com/search?q=${encodeURIComponent(trimmedInput)}`;
+}
+
 function getWebSlotIconUrl(url: string): string {
   try {
     const hostname = new URL(url).hostname;
@@ -366,7 +396,8 @@ function App() {
   const [sidebarView, setSidebarView] = React.useState<SidebarView>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = React.useState(false);
   const [addSlotModalOpen, setAddSlotModalOpen] = React.useState(false);
-  const [addWebSlotUrl, setAddWebSlotUrl] = React.useState('https://docs.google.com/');
+  const [addWebSlotUrl, setAddWebSlotUrl] = React.useState('');
+  const [addWebSlotMode, setAddWebSlotMode] = React.useState<'favorite' | 'manual'>('favorite');
   const [newTabModalOpen, setNewTabModalOpen] = React.useState(false);
   const [newTabWorkspaceListOpen, setNewTabWorkspaceListOpen] = React.useState(false);
   const [workspacePromotionOpen, setWorkspacePromotionOpen] = React.useState(false);
@@ -2080,7 +2111,8 @@ function App() {
   }, [clearSlotNavigationState, setGroup, slots]);
 
   const handleAddSlot = React.useCallback(() => {
-    setAddWebSlotUrl('https://docs.google.com/');
+    setAddWebSlotUrl('');
+    setAddWebSlotMode('favorite');
     setAddSlotModalOpen(true);
   }, []);
 
@@ -2118,17 +2150,17 @@ function App() {
       return;
     }
 
-    const normalizedUrl = normalizeWebUrl(url);
+    const resolvedUrl = resolveWebSlotInput(url);
 
-    if (!normalizedUrl) {
-      setNavigationNotice('올바른 http/https URL을 입력하세요.');
+    if (!resolvedUrl) {
+      setNavigationNotice('올바른 주소나 검색어를 입력하세요.');
       return;
     }
 
-    const newSlot = createNewWebSlot(normalizedUrl);
+    const newSlot = createNewWebSlot(resolvedUrl);
 
     if (!newSlot) {
-      setNavigationNotice('올바른 http/https URL을 입력하세요.');
+      setNavigationNotice('올바른 주소나 검색어를 입력하세요.');
       return;
     }
 
@@ -2422,15 +2454,15 @@ function App() {
   }, [reloadSlot]);
 
   const handleWebSlotAddressSubmit = React.useCallback((slotId: string, url: string) => {
-    const normalizedUrl = normalizeWebUrl(url);
+    const resolvedUrl = resolveWebSlotInput(url);
 
-    if (!normalizedUrl) {
-      setNavigationNotice('올바른 http/https URL을 입력하세요.');
+    if (!resolvedUrl) {
+      setNavigationNotice('올바른 주소나 검색어를 입력하세요.');
       return;
     }
 
     try {
-      webviewRefs.current[slotId]?.loadURL?.(normalizedUrl);
+      webviewRefs.current[slotId]?.loadURL?.(resolvedUrl);
       setNavigationNotice('');
     } catch {
       setNavigationNotice('웹슬롯 주소를 열 수 없습니다.');
@@ -3266,15 +3298,63 @@ function App() {
               </section>
               <section>
                 <h3>웹슬롯 추가</h3>
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    handleConfirmAddWebSlot(addWebSlotUrl);
-                  }}
-                >
-                  <input type="text" value={addWebSlotUrl} onChange={(event) => setAddWebSlotUrl(event.target.value)} />
-                  <button type="submit">추가</button>
-                </form>
+                <div>
+                  <button
+                    type="button"
+                    className={`memo-filter-command ${addWebSlotMode === 'favorite' ? 'active' : ''}`}
+                    onClick={() => setAddWebSlotMode('favorite')}
+                  >
+                    즐겨찾기에서 선택
+                  </button>
+                  <button
+                    type="button"
+                    className={`memo-filter-command ${addWebSlotMode === 'manual' ? 'active' : ''}`}
+                    onClick={() => setAddWebSlotMode('manual')}
+                  >
+                    직접 입력
+                  </button>
+                </div>
+                {addWebSlotMode === 'favorite' ? (
+                  favorites.length === 0 ? (
+                    <p className="memo-empty">저장된 즐겨찾기가 없습니다</p>
+                  ) : (
+                    <div className="memo-grid">
+                      {favorites.map((favorite) => {
+                        const iconUrl = getWebSlotIconUrl(favorite.url);
+
+                        return (
+                          <button
+                            key={favorite.id}
+                            className="add-slot-provider-button"
+                            type="button"
+                            onClick={() => {
+                              handleOpenFavorite(favorite);
+                              setAddSlotModalOpen(false);
+                            }}
+                          >
+                            {iconUrl && <img src={iconUrl} alt="" aria-hidden="true" />}
+                            <span>{favorite.title}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )
+                ) : (
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      handleConfirmAddWebSlot(addWebSlotUrl);
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={addWebSlotUrl}
+                      placeholder="주소 또는 검색어 입력"
+                      onChange={(event) => setAddWebSlotUrl(event.target.value)}
+                    />
+                    <button type="submit">추가</button>
+                  </form>
+                )}
               </section>
             </section>
           </div>
