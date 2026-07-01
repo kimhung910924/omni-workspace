@@ -73,24 +73,33 @@ app.whenReady().then(() => {
     });
 
     if (contents.getType() === 'webview') {
-      contents.setWindowOpenHandler(() => ({
-        action: 'allow',
-        overrideBrowserWindowOptions: {
-          width: 520,
-          height: 720,
-          minWidth: 420,
-          minHeight: 560,
-          autoHideMenuBar: true,
-          parent: BrowserWindow.fromWebContents(contents) ?? undefined,
-          modal: false,
-          webPreferences: {
-            session: contents.session,
-            nodeIntegration: false,
-            contextIsolation: true,
-            sandbox: true,
+      const isWebSlot = contents.session === session.fromPartition(WEBSLOT_PARTITION);
+
+      contents.setWindowOpenHandler(({ url }) => {
+        if (isWebSlot) {
+          void contents.loadURL(url);
+          return { action: 'deny' };
+        }
+
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 520,
+            height: 720,
+            minWidth: 420,
+            minHeight: 560,
+            autoHideMenuBar: true,
+            parent: BrowserWindow.fromWebContents(contents) ?? undefined,
+            modal: false,
+            webPreferences: {
+              session: contents.session,
+              nodeIntegration: false,
+              contextIsolation: true,
+              sandbox: true,
+            },
           },
-        },
-      }));
+        };
+      });
     }
   });
   createMainWindow();
