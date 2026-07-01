@@ -15,6 +15,7 @@ type SlotHeaderProps = {
   onBack: () => void;
   onForward: () => void;
   onReload: () => void;
+  onAddFavorite?: () => void;
   onHome: () => void;
   isMaximized: boolean;
   onToggleMaximize: () => void;
@@ -84,6 +85,7 @@ export function SlotHeader({
   onBack,
   onForward,
   onReload,
+  onAddFavorite,
   onHome,
   isMaximized,
   onToggleMaximize,
@@ -128,6 +130,7 @@ export function SlotHeader({
             type="text"
             value={draft}
             aria-label={`${label} address`}
+            onPointerDown={(event) => event.stopPropagation()}
             onChange={(event) => setDraft(event.target.value)}
             onBlur={submitAddress}
             onKeyDown={(event) => {
@@ -146,6 +149,21 @@ export function SlotHeader({
       </div>
 
       <div className="slot-header-group slot-header-window" aria-label={`${label} slot actions`}>
+        {kind === 'web' && (
+          <button
+            className="slot-icon-button"
+            type="button"
+            title="즐겨찾기에 추가"
+            aria-label={`${label} 즐겨찾기에 추가`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onAddFavorite?.();
+            }}
+          >
+            *
+          </button>
+        )}
         <button className="slot-icon-button" type="button" title="New chat" aria-label={`${label} new chat`} onClick={onHome}>
           <HomeIcon />
         </button>

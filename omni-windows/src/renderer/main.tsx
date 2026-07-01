@@ -18,10 +18,14 @@ import {
   getSourceHint,
 } from './features/memos/memoUtils';
 import { memoRepository } from './data/local/localMemoRepository';
+import { favoriteRepository } from './data/local/localFavoriteRepository';
 import { useEntitlement } from './entitlement/useEntitlement';
 import { getCurrentLanguage, initI18n, saveLanguagePreference, type SupportedLanguage } from './i18n';
 import { workspaceRepository } from './data/local/localWorkspaceRepository';
 import type { Memo } from './features/memos/types';
+import { createFavorite, createFavoriteFolder } from './features/favorites/favoriteStore';
+import { FavoriteCard } from './features/favorites/FavoriteCard';
+import type { Favorite, FavoriteFolder } from './features/favorites/types';
 import { isAiSlot, type Group, type ProviderSlot, type Slot, type WebSlot, type WorkspaceRecord } from './types';
 
 type WebviewNavigationEvent = Event & {
@@ -75,7 +79,7 @@ type WorkspaceTab = {
 
 type Tab = GroupTab | WorkspaceTab;
 
-type SidebarView = 'workspace-panel' | 'prompt-library' | null;
+type SidebarView = 'workspace-panel' | 'prompt-library' | 'favorites-panel' | null;
 type DropPosition = { targetId: string | null; side: 'before' | 'after' | null };
 type MemoProviderFilter = Memo['provider'];
 type StagePointerDrag = {
@@ -390,6 +394,8 @@ function App() {
   const [selectedMemoId, setSelectedMemoId] = React.useState<string | null>(null);
   const [navigationNotice, setNavigationNotice] = React.useState('');
   const [memos, setMemos] = React.useState<Memo[]>(() => memoRepository.list());
+  const [favorites, setFavorites] = React.useState<Favorite[]>(() => favoriteRepository.list());
+  const [favoriteFolders, setFavoriteFolders] = React.useState<FavoriteFolder[]>(() => favoriteRepository.listFolders());
   const [webviewCapturePreloadUrl, setWebviewCapturePreloadUrl] = React.useState<string | null>(null);
   const [navigationStates, setNavigationStates] = React.useState<Partial<Record<string, NavigationState>>>(() =>
     createInitialNavigationStates(slots),
@@ -498,6 +504,14 @@ function App() {
   React.useEffect(() => {
     memoRepository.save(memos);
   }, [memos]);
+
+  React.useEffect(() => {
+    favoriteRepository.save(favorites);
+  }, [favorites]);
+
+  React.useEffect(() => {
+    favoriteRepository.saveFolders(favoriteFolders);
+  }, [favoriteFolders]);
 
   React.useEffect(() => {
     if (tabs.length < MAX_TABS && workspacePanelNotice) {
@@ -2139,6 +2153,99 @@ function App() {
     setAddSlotModalOpen(false);
   }, [group.slots.length, setGroup]);
 
+  const handleAddFavorite = React.useCallback((url: string, title: string) => {
+    const normalizedUrl = normalizeWebUrl(url);
+
+    if (!normalizedUrl) {
+      return;
+    }
+
+    const favoriteTitle = title.trim() || new URL(normalizedUrl).hostname;
+    setFavorites((currentFavorites) => {
+      if (currentFavorites.some((favorite) => favorite.url === normalizedUrl)) {
+        return currentFavorites;
+      }
+
+      return [createFavorite(normalizedUrl, favoriteTitle, null), ...currentFavorites];
+    });
+  }, []);
+
+  const handleCreateFavoriteFolder = React.useCallback((name: string) => {
+    const folderName = name.trim();
+
+    if (!folderName) {
+      return;
+    }
+
+    setFavoriteFolders((currentFolders) => [...currentFolders, createFavoriteFolder(folderName)]);
+  }, []);
+
+  const handleRenameFavoriteFolder = React.useCallback((id: string, name: string) => {
+    const folderName = name.trim();
+
+    if (!folderName) {
+      return;
+    }
+
+    setFavoriteFolders((currentFolders) =>
+      currentFolders.map((folder) => (folder.id === id ? { ...folder, name: folderName } : folder)),
+    );
+  }, []);
+
+  const handleDeleteFavoriteFolder = React.useCallback((id: string) => {
+    if (!window.confirm('이 폴더를 삭제할까요? 즐겨찾기는 미분류로 이동합니다.')) {
+      return;
+    }
+
+    setFavoriteFolders((currentFolders) => currentFolders.filter((folder) => folder.id !== id));
+    setFavorites((currentFavorites) =>
+      currentFavorites.map((favorite) => (favorite.folderId === id ? { ...favorite, folderId: null, updatedAt: Date.now() } : favorite)),
+    );
+  }, []);
+
+  const handleDeleteFavorite = React.useCallback((id: string) => {
+    setFavorites((currentFavorites) => currentFavorites.filter((favorite) => favorite.id !== id));
+  }, []);
+
+  const handleOpenFavorite = React.useCallback((favorite: Favorite) => {
+    if (group.slots.length >= MAX_SLOTS) {
+      setNavigationNotice('슬롯이 꽉 찼습니다.');
+      return;
+    }
+
+    const webSlot = createNewWebSlot(favorite.url);
+
+    if (!webSlot) {
+      setNavigationNotice('즐겨찾기 URL을 열 수 없습니다.');
+      return;
+    }
+
+    const newSlot: WebSlot = {
+      ...webSlot,
+      title: favorite.title,
+    };
+
+    setGroup((currentGroup) => {
+      const goesToStage = currentGroup.stageIds.length < MAX_STAGE_SLOTS;
+
+      return {
+        ...currentGroup,
+        slots: [...currentGroup.slots, newSlot],
+        stageIds: goesToStage ? [...currentGroup.stageIds, newSlot.id] : currentGroup.stageIds,
+        dockIds: goesToStage ? currentGroup.dockIds : [...currentGroup.dockIds, newSlot.id],
+      };
+    });
+    setNavigationStates((current) => ({
+      ...current,
+      [newSlot.id]: { canGoBack: false, canGoForward: false, isDomReady: false },
+    }));
+    setBroadcastStatuses((current) => ({
+      ...current,
+      [newSlot.id]: { state: 'idle', message: 'Ready' },
+    }));
+    setSidebarView(null);
+  }, [group.slots.length, setGroup]);
+
   const handleManualMemoSave = React.useCallback(() => {
     const content = manualMemoText.trim();
 
@@ -2336,8 +2443,11 @@ function App() {
         : '';
   const workspacePanelOpen = sidebarView === 'workspace-panel' && !memoPanelOpen;
   const sidebarPlaceholderOpen = sidebarView === 'prompt-library' && !memoPanelOpen;
-  const sidebarPageOpen = workspacePanelOpen || sidebarPlaceholderOpen;
+  const favoritesPanelOpen = sidebarView === 'favorites-panel' && !memoPanelOpen;
+  const sidebarPageOpen = workspacePanelOpen || sidebarPlaceholderOpen || favoritesPanelOpen;
   const openedWorkspaceIds = new Set(tabs.flatMap((tab) => (tab.kind === 'workspace' ? [tab.workspaceId] : [])));
+  const uncategorizedFavorites = favorites.filter((favorite) => favorite.folderId === null);
+  const hasFavoriteContent = favorites.length > 0 || favoriteFolders.length > 0;
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -2387,6 +2497,17 @@ function App() {
               ✎
             </span>
             <span className="workspace-label">프롬프트 라이브러리</span>
+          </button>
+          <button
+            className={`workspace-item ${sidebarView === 'favorites-panel' && !memoPanelOpen ? 'active' : ''}`}
+            type="button"
+            title="즐겨찾기"
+            onClick={() => handleSidebarViewSelect('favorites-panel')}
+          >
+            <span className="workspace-icon global-nav-icon" aria-hidden="true">
+              *
+            </span>
+            <span className="workspace-label">즐겨찾기</span>
           </button>
           <button
             className={`workspace-item ${memoPanelOpen ? 'active' : ''}`}
@@ -2742,6 +2863,7 @@ function App() {
                           onBack={() => goSlotBack(slot.id)}
                           onForward={() => goSlotForward(slot.id)}
                           onReload={() => reloadSlot(slot.id)}
+                          onAddFavorite={() => handleAddFavorite(slot.currentUrl, slot.title)}
                           onHome={() => startSlotNewChat(slot)}
                           isMaximized={isMaximized}
                           onToggleMaximize={() => {
@@ -3012,6 +3134,103 @@ function App() {
                 )}
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className={`memos-page ${favoritesPanelOpen ? '' : 'view-hidden'}`} aria-label="즐겨찾기">
+          <div className="memos-page-inner">
+            <div className="memos-page-header">
+              <div className="memos-page-title-row">
+                <button className="page-back-button" type="button" aria-label="Stage로 돌아가기" title="Stage로 돌아가기" onClick={handleReturnToStage}>
+                  ←
+                </button>
+                <div>
+                  <h1>즐겨찾기</h1>
+                  <p>자주 쓰는 웹슬롯 주소를 바로 엽니다.</p>
+                </div>
+              </div>
+              <button
+                className="manual-memo-save"
+                type="button"
+                onClick={() => {
+                  const folderName = window.prompt('새 폴더 이름');
+                  if (folderName !== null) {
+                    handleCreateFavoriteFolder(folderName);
+                  }
+                }}
+              >
+                새 폴더
+              </button>
+            </div>
+
+            {!hasFavoriteContent ? (
+              <p className="memo-empty">저장된 즐겨찾기가 없습니다</p>
+            ) : (
+              <>
+                {favoriteFolders.map((folder) => {
+                  const folderFavorites = favorites.filter((favorite) => favorite.folderId === folder.id);
+
+                  return (
+                    <div key={folder.id} className="memo-section">
+                      <h3>
+                        {folder.name}
+                        <button
+                          className="memo-action-button"
+                          type="button"
+                          title="이름수정"
+                          onClick={() => {
+                            const folderName = window.prompt('폴더 이름', folder.name);
+                            if (folderName !== null) {
+                              handleRenameFavoriteFolder(folder.id, folderName);
+                            }
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="memo-action-button danger"
+                          type="button"
+                          title="삭제"
+                          onClick={() => handleDeleteFavoriteFolder(folder.id)}
+                        >
+                          x
+                        </button>
+                      </h3>
+                      {folderFavorites.length > 0 ? (
+                        <div className="memo-grid">
+                          {folderFavorites.map((favorite) => (
+                            <FavoriteCard
+                              key={favorite.id}
+                              favorite={favorite}
+                              onOpen={() => handleOpenFavorite(favorite)}
+                              onDelete={() => handleDeleteFavorite(favorite.id)}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="memo-empty">저장된 즐겨찾기가 없습니다</p>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {uncategorizedFavorites.length > 0 && (
+                  <div className="memo-section">
+                    <h3>미분류</h3>
+                    <div className="memo-grid">
+                      {uncategorizedFavorites.map((favorite) => (
+                        <FavoriteCard
+                          key={favorite.id}
+                          favorite={favorite}
+                          onOpen={() => handleOpenFavorite(favorite)}
+                          onDelete={() => handleDeleteFavorite(favorite.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </section>
 

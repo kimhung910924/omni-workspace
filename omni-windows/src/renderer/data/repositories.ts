@@ -1,5 +1,6 @@
 import type { LayoutMode, Slot, WorkspaceRecord } from '../types';
 import type { Memo } from '../features/memos/types';
+import type { Favorite, FavoriteFolder } from '../features/favorites/types';
 
 export interface WorkspaceRepository {
   list(): WorkspaceRecord[];
@@ -26,4 +27,11 @@ export interface WorkspaceRepository {
 export interface MemoRepository {
   list(): Memo[];
   save(memos: Memo[]): void;
+}
+
+export interface FavoriteRepository {
+  list(): Favorite[];
+  save(favorites: Favorite[]): void;
+  listFolders(): FavoriteFolder[];
+  saveFolders(folders: FavoriteFolder[]): void;
 }
