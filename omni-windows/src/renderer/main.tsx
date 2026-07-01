@@ -427,6 +427,13 @@ function App() {
   const [memos, setMemos] = React.useState<Memo[]>(() => memoRepository.list());
   const [favorites, setFavorites] = React.useState<Favorite[]>(() => favoriteRepository.list());
   const [favoriteFolders, setFavoriteFolders] = React.useState<FavoriteFolder[]>(() => favoriteRepository.listFolders());
+  const [favoriteFilter, setFavoriteFilter] = React.useState<'all' | 'uncategorized' | string>('all');
+  const [favoriteFolderModal, setFavoriteFolderModal] = React.useState<{
+    mode: 'create' | 'rename';
+    folderId?: string;
+    initialName: string;
+  } | null>(null);
+  const [favoriteFolderDraft, setFavoriteFolderDraft] = React.useState('');
   const [webviewCapturePreloadUrl, setWebviewCapturePreloadUrl] = React.useState<string | null>(null);
   const [navigationStates, setNavigationStates] = React.useState<Partial<Record<string, NavigationState>>>(() =>
     createInitialNavigationStates(slots),
@@ -543,6 +550,10 @@ function App() {
   React.useEffect(() => {
     favoriteRepository.saveFolders(favoriteFolders);
   }, [favoriteFolders]);
+
+  React.useEffect(() => {
+    setFavoriteFolderDraft(favoriteFolderModal?.initialName ?? '');
+  }, [favoriteFolderModal]);
 
   React.useEffect(() => {
     if (tabs.length < MAX_TABS && workspacePanelNotice) {
@@ -2233,10 +2244,19 @@ function App() {
     setFavorites((currentFavorites) =>
       currentFavorites.map((favorite) => (favorite.folderId === id ? { ...favorite, folderId: null, updatedAt: Date.now() } : favorite)),
     );
+    setFavoriteFilter((currentFilter) => (currentFilter === id ? 'all' : currentFilter));
   }, []);
 
   const handleDeleteFavorite = React.useCallback((id: string) => {
     setFavorites((currentFavorites) => currentFavorites.filter((favorite) => favorite.id !== id));
+  }, []);
+
+  const handleMoveFavoriteToFolder = React.useCallback((favoriteId: string, folderId: string | null) => {
+    setFavorites((currentFavorites) =>
+      currentFavorites.map((favorite) =>
+        favorite.id === favoriteId ? { ...favorite, folderId, updatedAt: Date.now() } : favorite,
+      ),
+    );
   }, []);
 
   const handleOpenFavorite = React.useCallback((favorite: Favorite) => {
@@ -2478,8 +2498,13 @@ function App() {
   const favoritesPanelOpen = sidebarView === 'favorites-panel' && !memoPanelOpen;
   const sidebarPageOpen = workspacePanelOpen || sidebarPlaceholderOpen || favoritesPanelOpen;
   const openedWorkspaceIds = new Set(tabs.flatMap((tab) => (tab.kind === 'workspace' ? [tab.workspaceId] : [])));
-  const uncategorizedFavorites = favorites.filter((favorite) => favorite.folderId === null);
-  const hasFavoriteContent = favorites.length > 0 || favoriteFolders.length > 0;
+  const uncategorizedFavoriteCount = favorites.filter((favorite) => favorite.folderId === null).length;
+  const filteredFavorites =
+    favoriteFilter === 'all'
+      ? favorites
+      : favoriteFilter === 'uncategorized'
+        ? favorites.filter((favorite) => favorite.folderId === null)
+        : favorites.filter((favorite) => favorite.folderId === favoriteFilter);
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -3169,102 +3194,137 @@ function App() {
           </div>
         </section>
 
-        <section className={`memos-page ${favoritesPanelOpen ? '' : 'view-hidden'}`} aria-label="즐겨찾기">
-          <div className="memos-page-inner">
-            <div className="memos-page-header">
-              <div className="memos-page-title-row">
-                <button className="page-back-button" type="button" aria-label="Stage로 돌아가기" title="Stage로 돌아가기" onClick={handleReturnToStage}>
-                  ←
-                </button>
-                <div>
-                  <h1>즐겨찾기</h1>
-                  <p>자주 쓰는 웹슬롯 주소를 바로 엽니다.</p>
-                </div>
-              </div>
-              <button
-                className="manual-memo-save"
-                type="button"
-                onClick={() => {
-                  const folderName = window.prompt('새 폴더 이름');
-                  if (folderName !== null) {
-                    handleCreateFavoriteFolder(folderName);
-                  }
-                }}
-              >
-                새 폴더
-              </button>
+        <section className={`favorites-manager ${favoritesPanelOpen ? '' : 'view-hidden'}`} aria-label="즐겨찾기">
+          <div className="favorites-manager-header">
+            <button className="page-back-button" type="button" aria-label="Stage로 돌아가기" title="Stage로 돌아가기" onClick={handleReturnToStage}>
+              ←
+            </button>
+            <div>
+              <h1>즐겨찾기</h1>
+              <p>웹슬롯 즐겨찾기를 정리합니다.</p>
             </div>
+            <button
+              className="manual-memo-save"
+              type="button"
+              onClick={() => setFavoriteFolderModal({ mode: 'create', initialName: '' })}
+            >
+              새 폴더
+            </button>
+          </div>
+          <div className="favorites-manager-body">
+            <nav className="favorites-folder-list" aria-label="즐겨찾기 폴더">
+              <button
+                className={`favorites-folder-item ${favoriteFilter === 'all' ? 'active' : ''}`}
+                type="button"
+                onClick={() => setFavoriteFilter('all')}
+              >
+                전체 ({favorites.length})
+              </button>
+              <button
+                className={`favorites-folder-item ${favoriteFilter === 'uncategorized' ? 'active' : ''}`}
+                type="button"
+                onClick={() => setFavoriteFilter('uncategorized')}
+              >
+                미분류 ({uncategorizedFavoriteCount})
+              </button>
+              {favoriteFolders.map((folder) => {
+                const folderFavoriteCount = favorites.filter((favorite) => favorite.folderId === folder.id).length;
 
-            {!hasFavoriteContent ? (
-              <p className="memo-empty">저장된 즐겨찾기가 없습니다</p>
-            ) : (
-              <>
-                {favoriteFolders.map((folder) => {
-                  const folderFavorites = favorites.filter((favorite) => favorite.folderId === folder.id);
-
-                  return (
-                    <div key={folder.id} className="memo-section">
-                      <h3>
-                        {folder.name}
-                        <button
-                          className="memo-action-button"
-                          type="button"
-                          title="이름수정"
-                          onClick={() => {
-                            const folderName = window.prompt('폴더 이름', folder.name);
-                            if (folderName !== null) {
-                              handleRenameFavoriteFolder(folder.id, folderName);
-                            }
-                          }}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="memo-action-button danger"
-                          type="button"
-                          title="삭제"
-                          onClick={() => handleDeleteFavoriteFolder(folder.id)}
-                        >
-                          x
-                        </button>
-                      </h3>
-                      {folderFavorites.length > 0 ? (
-                        <div className="memo-grid">
-                          {folderFavorites.map((favorite) => (
-                            <FavoriteCard
-                              key={favorite.id}
-                              favorite={favorite}
-                              onOpen={() => handleOpenFavorite(favorite)}
-                              onDelete={() => handleDeleteFavorite(favorite.id)}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="memo-empty">저장된 즐겨찾기가 없습니다</p>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {uncategorizedFavorites.length > 0 && (
-                  <div className="memo-section">
-                    <h3>미분류</h3>
-                    <div className="memo-grid">
-                      {uncategorizedFavorites.map((favorite) => (
-                        <FavoriteCard
-                          key={favorite.id}
-                          favorite={favorite}
-                          onOpen={() => handleOpenFavorite(favorite)}
-                          onDelete={() => handleDeleteFavorite(favorite.id)}
-                        />
-                      ))}
-                    </div>
+                return (
+                  <div key={folder.id} className="favorites-folder-item-row">
+                    <button
+                      className={`favorites-folder-item ${favoriteFilter === folder.id ? 'active' : ''}`}
+                      type="button"
+                      onClick={() => setFavoriteFilter(folder.id)}
+                    >
+                      {folder.name} ({folderFavoriteCount})
+                    </button>
+                    <button
+                      className="memo-action-button"
+                      type="button"
+                      title="이름수정"
+                      onClick={() => setFavoriteFolderModal({ mode: 'rename', folderId: folder.id, initialName: folder.name })}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="memo-action-button danger"
+                      type="button"
+                      title="삭제"
+                      onClick={() => handleDeleteFavoriteFolder(folder.id)}
+                    >
+                      x
+                    </button>
                   </div>
-                )}
-              </>
-            )}
+                );
+              })}
+            </nav>
+            <div className="favorites-grid-area">
+              {filteredFavorites.length > 0 ? (
+                <div className="memo-grid">
+                  {filteredFavorites.map((favorite) => (
+                    <FavoriteCard
+                      key={favorite.id}
+                      favorite={favorite}
+                      folders={favoriteFolders}
+                      onMoveFolder={(folderId) => handleMoveFavoriteToFolder(favorite.id, folderId)}
+                      onDelete={() => handleDeleteFavorite(favorite.id)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="memo-empty">즐겨찾기가 없습니다</p>
+              )}
+            </div>
           </div>
         </section>
+
+        {favoriteFolderModal && (
+          <div className="add-slot-modal-backdrop" role="presentation" onMouseDown={() => setFavoriteFolderModal(null)}>
+            <section
+              className="add-slot-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="favorite-folder-modal-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+
+                  if (favoriteFolderModal.mode === 'create') {
+                    handleCreateFavoriteFolder(favoriteFolderDraft);
+                  } else if (favoriteFolderModal.folderId) {
+                    handleRenameFavoriteFolder(favoriteFolderModal.folderId, favoriteFolderDraft);
+                  }
+
+                  setFavoriteFolderModal(null);
+                }}
+              >
+                <header className="add-slot-modal-header">
+                  <h2 id="favorite-folder-modal-title">
+                    {favoriteFolderModal.mode === 'create' ? '새 폴더' : '이름수정'}
+                  </h2>
+                  <button className="add-slot-modal-close" type="button" aria-label="닫기" onClick={() => setFavoriteFolderModal(null)}>
+                    ×
+                  </button>
+                </header>
+                <input
+                  type="text"
+                  value={favoriteFolderDraft}
+                  autoFocus
+                  onChange={(event) => setFavoriteFolderDraft(event.target.value)}
+                />
+                <footer>
+                  <button type="button" onClick={() => setFavoriteFolderModal(null)}>
+                    취소
+                  </button>
+                  <button type="submit">확인</button>
+                </footer>
+              </form>
+            </section>
+          </div>
+        )}
 
         {addSlotModalOpen && (
           <div className="add-slot-modal-backdrop" role="presentation" onMouseDown={() => setAddSlotModalOpen(false)}>

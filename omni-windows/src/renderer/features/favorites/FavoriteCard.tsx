@@ -1,8 +1,9 @@
-import type { Favorite } from './types';
+import type { Favorite, FavoriteFolder } from './types';
 
 type FavoriteCardProps = {
   favorite: Favorite;
-  onOpen: () => void;
+  folders: FavoriteFolder[];
+  onMoveFolder: (folderId: string | null) => void;
   onDelete: () => void;
 };
 
@@ -15,21 +16,11 @@ function getFavoriteIconUrl(url: string): string {
   }
 }
 
-export function FavoriteCard({ favorite, onOpen, onDelete }: FavoriteCardProps) {
+export function FavoriteCard({ favorite, folders, onMoveFolder, onDelete }: FavoriteCardProps) {
   const iconUrl = getFavoriteIconUrl(favorite.url);
 
   return (
-    <article
-      className="memo-card"
-      tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          onOpen();
-        }
-      }}
-    >
+    <article className="memo-card">
       <div className="memo-card-meta">
         {iconUrl && <img src={iconUrl} alt="" aria-hidden="true" />}
         <span>{favorite.title}</span>
@@ -41,7 +32,14 @@ export function FavoriteCard({ favorite, onOpen, onDelete }: FavoriteCardProps) 
       </div>
 
       <div className="memo-card-footer">
-        <span>{favorite.url}</span>
+        <select value={favorite.folderId ?? ''} onChange={(event) => onMoveFolder(event.target.value || null)}>
+          <option value="">미분류</option>
+          {folders.map((folder) => (
+            <option key={folder.id} value={folder.id}>
+              {folder.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="memo-actions" onClick={(event) => event.stopPropagation()}>
