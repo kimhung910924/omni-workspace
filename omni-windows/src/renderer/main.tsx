@@ -23,6 +23,7 @@ import { useEntitlement } from './entitlement/useEntitlement';
 import { getCurrentLanguage, initI18n, saveLanguagePreference, type SupportedLanguage } from './i18n';
 import { workspaceRepository } from './data/local/localWorkspaceRepository';
 import type { Memo } from './features/memos/types';
+import { BookmarkBar } from './features/favorites/BookmarkBar';
 import { createFavorite, createFavoriteFolder } from './features/favorites/favoriteStore';
 import { FavoriteCard } from './features/favorites/FavoriteCard';
 import type { Favorite, FavoriteFolder } from './features/favorites/types';
@@ -92,6 +93,7 @@ type StagePointerDrag = {
 };
 
 const MAX_TABS_NOTICE = '상단탭이 꽉 찼습니다. 상단탭 자리 확보 후 다시 시도해주세요.';
+const BOOKMARK_BAR_VISIBLE_KEY = 'omni-bookmark-bar-visible';
 const DEFAULT_STARTUP_PROVIDER_IDS: ProviderId[] = ['claude', 'chatgpt', 'gemini'];
 const MEMO_PROVIDER_FILTER_OPTIONS: Array<{ provider: MemoProviderFilter; label: string }> = [
   { provider: null, label: 'Private' },
@@ -427,6 +429,10 @@ function App() {
   const [memos, setMemos] = React.useState<Memo[]>(() => memoRepository.list());
   const [favorites, setFavorites] = React.useState<Favorite[]>(() => favoriteRepository.list());
   const [favoriteFolders, setFavoriteFolders] = React.useState<FavoriteFolder[]>(() => favoriteRepository.listFolders());
+  const [bookmarkBarVisible, setBookmarkBarVisible] = React.useState<boolean>(() => {
+    const stored = window.localStorage.getItem(BOOKMARK_BAR_VISIBLE_KEY);
+    return stored === null ? true : stored === 'true';
+  });
   const [favoriteFilter, setFavoriteFilter] = React.useState<'all' | 'uncategorized' | string>('all');
   const [favoriteFolderModal, setFavoriteFolderModal] = React.useState<{
     mode: 'create' | 'rename';
@@ -550,6 +556,10 @@ function App() {
   React.useEffect(() => {
     favoriteRepository.saveFolders(favoriteFolders);
   }, [favoriteFolders]);
+
+  React.useEffect(() => {
+    window.localStorage.setItem(BOOKMARK_BAR_VISIBLE_KEY, String(bookmarkBarVisible));
+  }, [bookmarkBarVisible]);
 
   React.useEffect(() => {
     setFavoriteFolderDraft(favoriteFolderModal?.initialName ?? '');
@@ -2240,6 +2250,10 @@ function App() {
     }));
   }, [setGroup]);
 
+  const handleToggleBookmarkBar = React.useCallback(() => {
+    setBookmarkBarVisible((current) => !current);
+  }, []);
+
   const handleCreateFavoriteFolder = React.useCallback((name: string) => {
     const folderName = name.trim();
 
@@ -2923,7 +2937,7 @@ function App() {
                     return (
                       <div
                         key={`${ownerTab.id}:${slot.id}`}
-                        className={`provider-pane expanded ${draggingSlotId === slot.id ? 'dragging' : ''} ${isMaximized ? 'maximized' : ''}`}
+                        className={`provider-pane expanded ${slot.kind === 'web' && bookmarkBarVisible ? 'has-bookmark-bar' : ''} ${draggingSlotId === slot.id ? 'dragging' : ''} ${isMaximized ? 'maximized' : ''}`}
                         data-slot-id={slot.id}
                         onDragOver={(event) => handleSlotDragOver('stage', slot.id, event)}
                         onDrop={(event) => handleSlotDrop('stage', slot.id, event)}
@@ -2950,6 +2964,8 @@ function App() {
                           favorite={slot.kind === 'web' ? findFavoriteByUrl(slot.currentUrl) : undefined}
                           favoriteFolders={favoriteFolders}
                           favorites={favorites}
+                          bookmarkBarVisible={bookmarkBarVisible}
+                          onToggleBookmarkBar={handleToggleBookmarkBar}
                           onSaveFavorite={(title, folderId) =>
                             handleSaveFavorite(slot.currentUrl, title, folderId, findFavoriteByUrl(slot.currentUrl)?.id)
                           }
@@ -2971,6 +2987,13 @@ function App() {
                           }}
                           onClose={() => closeSlot(slot.id)}
                         />
+                        {slot.kind === 'web' && bookmarkBarVisible && (
+                          <BookmarkBar
+                            favorites={favorites}
+                            favoriteFolders={favoriteFolders}
+                            onSelect={(favorite) => handleNavigateSlotToFavorite(slot.id, favorite)}
+                          />
+                        )}
                         <webview
                           className="provider-webview"
                           src={initialWebviewSrc}

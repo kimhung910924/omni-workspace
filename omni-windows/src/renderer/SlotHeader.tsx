@@ -22,6 +22,8 @@ type SlotHeaderProps = {
   onSaveFavorite: (title: string, folderId: string | null) => void;
   onRemoveFavorite: () => void;
   onSelectFavorite: (favorite: Favorite) => void;
+  bookmarkBarVisible: boolean;
+  onToggleBookmarkBar: () => void;
   onHome: () => void;
   isMaximized: boolean;
   onToggleMaximize: () => void;
@@ -109,6 +111,8 @@ export function SlotHeader({
   onSaveFavorite,
   onRemoveFavorite,
   onSelectFavorite,
+  bookmarkBarVisible,
+  onToggleBookmarkBar,
   onHome,
   isMaximized,
   onToggleMaximize,
@@ -159,6 +163,7 @@ export function SlotHeader({
             value={draft}
             aria-label={`${label} address`}
             onPointerDown={(event) => event.stopPropagation()}
+            onFocus={(event) => event.target.select()}
             onChange={(event) => setDraft(event.target.value)}
             onBlur={submitAddress}
             onKeyDown={(event) => {
@@ -280,9 +285,21 @@ export function SlotHeader({
               {kebabOpen && (
                 <div className="slot-kebab-menu" onPointerDown={(event) => event.stopPropagation()}>
                   {kebabView === 'menu' ? (
-                    <button className="slot-kebab-menu-item" type="button" onClick={() => setKebabView('favorites')}>
-                      즐겨찾기에서 열기
-                    </button>
+                    <>
+                      <button className="slot-kebab-menu-item" type="button" onClick={() => setKebabView('favorites')}>
+                        즐겨찾기에서 열기
+                      </button>
+                      <button
+                        className="slot-kebab-menu-item"
+                        type="button"
+                        onClick={() => {
+                          onToggleBookmarkBar();
+                          setKebabOpen(false);
+                        }}
+                      >
+                        {bookmarkBarVisible ? '즐겨찾기바 숨기기' : '즐겨찾기바 보이기'}
+                      </button>
+                    </>
                   ) : (
                     <div className="slot-kebab-favorites">
                       {favorites.length === 0 ? (
