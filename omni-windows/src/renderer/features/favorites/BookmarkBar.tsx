@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import type { Favorite, FavoriteFolder } from './types';
 
 type BookmarkBarProps = {
@@ -11,7 +12,7 @@ type BookmarkBarEntry =
   | { type: 'favorite'; favorite: Favorite }
   | { type: 'folder'; folder: FavoriteFolder };
 
-const MORE_BUTTON_RESERVED_WIDTH = 90;
+const MORE_BUTTON_RESERVED_WIDTH = 44;
 
 function getWebSlotIconUrl(url: string): string {
   try {
@@ -104,7 +105,12 @@ export function BookmarkBar({ favorites, favoriteFolders, onSelect }: BookmarkBa
     const handleDocumentMouseDown = (event: MouseEvent) => {
       const target = event.target;
 
-      if (!(target instanceof Element) || target.closest('.bookmark-bar') !== containerRef.current) {
+      if (
+        !(target instanceof Element) ||
+        (!target.closest('.bookmark-bar') &&
+          !target.closest('.bookmark-bar-dropdown') &&
+          !target.closest('.bookmark-bar-more-dropdown'))
+      ) {
         setOpenFolderId(null);
         setMoreDropdownOpen(false);
       }
@@ -179,24 +185,26 @@ export function BookmarkBar({ favorites, favoriteFolders, onSelect }: BookmarkBa
             >
               <span>{entry.folder.name}</span>
             </button>
-            {openFolderId === entry.folder.id && (
-              <div className="bookmark-bar-dropdown" style={folderDropdownPosition}>
-                {folderFavorites.length === 0 ? (
-                  <div className="bookmark-bar-dropdown-item empty">비어 있음</div>
-                ) : (
-                  folderFavorites.map((favorite) => (
-                    <button
-                      key={favorite.id}
-                      className="bookmark-bar-dropdown-item"
-                      type="button"
-                      onClick={() => handleFavoriteSelect(favorite)}
-                    >
-                      {favorite.title}
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
+            {openFolderId === entry.folder.id &&
+              createPortal(
+                <div className="bookmark-bar-dropdown" style={folderDropdownPosition}>
+                  {folderFavorites.length === 0 ? (
+                    <div className="bookmark-bar-dropdown-item empty">비어 있음</div>
+                  ) : (
+                    folderFavorites.map((favorite) => (
+                      <button
+                        key={favorite.id}
+                        className="bookmark-bar-dropdown-item"
+                        type="button"
+                        onClick={() => handleFavoriteSelect(favorite)}
+                      >
+                        {favorite.title}
+                      </button>
+                    ))
+                  )}
+                </div>,
+                document.body,
+              )}
           </div>
         );
       })}
@@ -205,6 +213,8 @@ export function BookmarkBar({ favorites, favoriteFolders, onSelect }: BookmarkBa
         <div className="bookmark-bar-more">
           <button
             type="button"
+            title="즐겨찾기 더보기"
+            aria-label="즐겨찾기 더보기"
             onClick={(event) => {
               const buttonRect = event.currentTarget.getBoundingClientRect();
 
@@ -216,48 +226,50 @@ export function BookmarkBar({ favorites, favoriteFolders, onSelect }: BookmarkBa
               setMoreDropdownOpen((currentOpen) => !currentOpen);
             }}
           >
-            더보기 »
+            »
           </button>
-          {moreDropdownOpen && (
-            <div className="bookmark-bar-more-dropdown" style={moreDropdownPosition}>
-              {hiddenEntries.map((entry) => {
-                if (entry.type === 'favorite') {
+          {moreDropdownOpen &&
+            createPortal(
+              <div className="bookmark-bar-more-dropdown" style={moreDropdownPosition}>
+                {hiddenEntries.map((entry) => {
+                  if (entry.type === 'favorite') {
+                    return (
+                      <button
+                        key={entry.favorite.id}
+                        className="bookmark-bar-dropdown-item"
+                        type="button"
+                        onClick={() => handleFavoriteSelect(entry.favorite)}
+                      >
+                        {entry.favorite.title}
+                      </button>
+                    );
+                  }
+
+                  const folderFavorites = favoritesByFolderId[entry.folder.id] ?? [];
+
                   return (
-                    <button
-                      key={entry.favorite.id}
-                      className="bookmark-bar-dropdown-item"
-                      type="button"
-                      onClick={() => handleFavoriteSelect(entry.favorite)}
-                    >
-                      {entry.favorite.title}
-                    </button>
+                    <div key={entry.folder.id} className="bookmark-bar-more-folder">
+                      <div className="bookmark-bar-dropdown-item folder-label">{entry.folder.name}</div>
+                      {folderFavorites.length === 0 ? (
+                        <div className="bookmark-bar-dropdown-item nested empty">비어 있음</div>
+                      ) : (
+                        folderFavorites.map((favorite) => (
+                          <button
+                            key={favorite.id}
+                            className="bookmark-bar-dropdown-item nested"
+                            type="button"
+                            onClick={() => handleFavoriteSelect(favorite)}
+                          >
+                            {favorite.title}
+                          </button>
+                        ))
+                      )}
+                    </div>
                   );
-                }
-
-                const folderFavorites = favoritesByFolderId[entry.folder.id] ?? [];
-
-                return (
-                  <div key={entry.folder.id} className="bookmark-bar-more-folder">
-                    <div className="bookmark-bar-dropdown-item folder-label">{entry.folder.name}</div>
-                    {folderFavorites.length === 0 ? (
-                      <div className="bookmark-bar-dropdown-item nested empty">비어 있음</div>
-                    ) : (
-                      folderFavorites.map((favorite) => (
-                        <button
-                          key={favorite.id}
-                          className="bookmark-bar-dropdown-item nested"
-                          type="button"
-                          onClick={() => handleFavoriteSelect(favorite)}
-                        >
-                          {favorite.title}
-                        </button>
-                      ))
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                })}
+              </div>,
+              document.body,
+            )}
         </div>
       )}
     </div>
