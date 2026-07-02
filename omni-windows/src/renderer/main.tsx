@@ -2196,22 +2196,49 @@ function App() {
     setAddSlotModalOpen(false);
   }, [group.slots.length, setGroup]);
 
-  const handleAddFavorite = React.useCallback((url: string, title: string) => {
+  const findFavoriteByUrl = React.useCallback((url: string): Favorite | undefined => {
     const normalizedUrl = normalizeWebUrl(url);
+
+    if (!normalizedUrl) {
+      return undefined;
+    }
+
+    return favorites.find((favorite) => favorite.url === normalizedUrl);
+  }, [favorites]);
+
+  const handleSaveFavorite = React.useCallback((currentUrl: string, title: string, folderId: string | null, existingId: string | undefined) => {
+    const normalizedUrl = normalizeWebUrl(currentUrl);
 
     if (!normalizedUrl) {
       return;
     }
 
     const favoriteTitle = title.trim() || new URL(normalizedUrl).hostname;
+
     setFavorites((currentFavorites) => {
-      if (currentFavorites.some((favorite) => favorite.url === normalizedUrl)) {
-        return currentFavorites;
+      if (existingId) {
+        return currentFavorites.map((favorite) =>
+          favorite.id === existingId ? { ...favorite, title: favoriteTitle, folderId, updatedAt: Date.now() } : favorite,
+        );
       }
 
-      return [createFavorite(normalizedUrl, favoriteTitle, null), ...currentFavorites];
+      return [createFavorite(normalizedUrl, favoriteTitle, folderId), ...currentFavorites];
     });
   }, []);
+
+  const handleNavigateSlotToFavorite = React.useCallback((slotId: string, favorite: Favorite) => {
+    const normalizedUrl = normalizeWebUrl(favorite.url);
+
+    if (!normalizedUrl) {
+      return;
+    }
+
+    webviewRefs.current[slotId]?.loadURL?.(normalizedUrl);
+    setGroup((currentGroup) => ({
+      ...currentGroup,
+      slots: currentGroup.slots.map((slot) => (slot.id === slotId ? { ...slot, title: favorite.title } : slot)),
+    }));
+  }, [setGroup]);
 
   const handleCreateFavoriteFolder = React.useCallback((name: string) => {
     const folderName = name.trim();
@@ -2920,7 +2947,20 @@ function App() {
                           onBack={() => goSlotBack(slot.id)}
                           onForward={() => goSlotForward(slot.id)}
                           onReload={() => reloadSlot(slot.id)}
-                          onAddFavorite={() => handleAddFavorite(slot.currentUrl, slot.title)}
+                          favorite={slot.kind === 'web' ? findFavoriteByUrl(slot.currentUrl) : undefined}
+                          favoriteFolders={favoriteFolders}
+                          favorites={favorites}
+                          onSaveFavorite={(title, folderId) =>
+                            handleSaveFavorite(slot.currentUrl, title, folderId, findFavoriteByUrl(slot.currentUrl)?.id)
+                          }
+                          onRemoveFavorite={() => {
+                            const favorite = findFavoriteByUrl(slot.currentUrl);
+
+                            if (favorite) {
+                              handleDeleteFavorite(favorite.id);
+                            }
+                          }}
+                          onSelectFavorite={(favorite) => handleNavigateSlotToFavorite(slot.id, favorite)}
                           onHome={() => startSlotNewChat(slot)}
                           isMaximized={isMaximized}
                           onToggleMaximize={() => {

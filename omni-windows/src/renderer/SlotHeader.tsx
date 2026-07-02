@@ -1,5 +1,6 @@
 import React from 'react';
 import type { MouseEventHandler, PointerEventHandler } from 'react';
+import type { Favorite, FavoriteFolder } from './features/favorites/types';
 import type { ProviderId } from './providerUrlStore';
 import { ProviderIcon } from './ProviderIcon';
 
@@ -15,7 +16,12 @@ type SlotHeaderProps = {
   onBack: () => void;
   onForward: () => void;
   onReload: () => void;
-  onAddFavorite?: () => void;
+  favorite?: Favorite;
+  favoriteFolders: FavoriteFolder[];
+  favorites: Favorite[];
+  onSaveFavorite: (title: string, folderId: string | null) => void;
+  onRemoveFavorite: () => void;
+  onSelectFavorite: (favorite: Favorite) => void;
   onHome: () => void;
   isMaximized: boolean;
   onToggleMaximize: () => void;
@@ -73,6 +79,18 @@ function MinimizeIcon() {
   );
 }
 
+function StarIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg className="slot-button-icon" viewBox="0 0 20 20" aria-hidden="true">
+      <path
+        d="m10 2.8 2.1 4.3 4.7.7-3.4 3.3.8 4.7-4.2-2.2-4.2 2.2.8-4.7-3.4-3.3 4.7-.7L10 2.8Z"
+        fill={filled ? 'currentColor' : 'none'}
+        stroke="currentColor"
+      />
+    </svg>
+  );
+}
+
 export function SlotHeader({
   kind,
   providerId,
@@ -85,7 +103,12 @@ export function SlotHeader({
   onBack,
   onForward,
   onReload,
-  onAddFavorite,
+  favorite,
+  favoriteFolders,
+  favorites,
+  onSaveFavorite,
+  onRemoveFavorite,
+  onSelectFavorite,
   onHome,
   isMaximized,
   onToggleMaximize,
@@ -94,6 +117,11 @@ export function SlotHeader({
   onClickCapture,
 }: SlotHeaderProps) {
   const [draft, setDraft] = React.useState(addressValue ?? '');
+  const [starPopoverOpen, setStarPopoverOpen] = React.useState(false);
+  const [favoriteTitleDraft, setFavoriteTitleDraft] = React.useState('');
+  const [favoriteFolderDraft, setFavoriteFolderDraft] = React.useState<string | null>(null);
+  const [kebabOpen, setKebabOpen] = React.useState(false);
+  const [kebabView, setKebabView] = React.useState<'menu' | 'favorites'>('menu');
 
   React.useEffect(() => {
     setDraft(addressValue ?? '');
@@ -150,19 +178,136 @@ export function SlotHeader({
 
       <div className="slot-header-group slot-header-window" aria-label={`${label} slot actions`}>
         {kind === 'web' && (
-          <button
-            className="slot-icon-button"
-            type="button"
-            title="즐겨찾기에 추가"
-            aria-label={`${label} 즐겨찾기에 추가`}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              onAddFavorite?.();
-            }}
-          >
-            *
-          </button>
+          <>
+            <div className="slot-favorite-container">
+              <button
+                className="slot-icon-button"
+                type="button"
+                title={favorite ? '즐겨찾기 수정' : '즐겨찾기에 추가'}
+                aria-label={favorite ? `${label} 즐겨찾기 수정` : `${label} 즐겨찾기에 추가`}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setStarPopoverOpen((currentOpen) => {
+                    const nextOpen = !currentOpen;
+
+                    if (nextOpen) {
+                      setFavoriteTitleDraft(favorite?.title ?? label);
+                      setFavoriteFolderDraft(favorite?.folderId ?? null);
+                    }
+
+                    return nextOpen;
+                  });
+                }}
+              >
+                <StarIcon filled={Boolean(favorite)} />
+              </button>
+              {starPopoverOpen && (
+                <div className="slot-favorite-popover" onPointerDown={(event) => event.stopPropagation()}>
+                  <div className="slot-favorite-popover-header">
+                    <span>{favorite ? '즐겨찾기 수정' : '즐겨찾기 추가'}</span>
+                    <button type="button" aria-label="닫기" onClick={() => setStarPopoverOpen(false)}>
+                      ×
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={favoriteTitleDraft}
+                    aria-label="즐겨찾기 제목"
+                    onChange={(event) => setFavoriteTitleDraft(event.target.value)}
+                  />
+                  <select
+                    value={favoriteFolderDraft ?? ''}
+                    aria-label="즐겨찾기 폴더"
+                    onChange={(event) => setFavoriteFolderDraft(event.target.value || null)}
+                  >
+                    <option value="">미분류</option>
+                    {favoriteFolders.map((folder) => (
+                      <option key={folder.id} value={folder.id}>
+                        {folder.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="slot-favorite-popover-actions">
+                    {favorite && (
+                      <button
+                        className="slot-favorite-delete"
+                        type="button"
+                        onClick={() => {
+                          onRemoveFavorite();
+                          setStarPopoverOpen(false);
+                        }}
+                      >
+                        삭제
+                      </button>
+                    )}
+                    <button
+                      className="slot-favorite-done"
+                      type="button"
+                      onClick={() => {
+                        onSaveFavorite(favoriteTitleDraft, favoriteFolderDraft);
+                        setStarPopoverOpen(false);
+                      }}
+                    >
+                      완료
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="slot-kebab-container">
+              <button
+                className="slot-icon-button"
+                type="button"
+                title="메뉴"
+                aria-label={`${label} 메뉴`}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setKebabOpen((currentOpen) => {
+                    const nextOpen = !currentOpen;
+
+                    if (nextOpen) {
+                      setKebabView('menu');
+                    }
+
+                    return nextOpen;
+                  });
+                }}
+              >
+                ⋯
+              </button>
+              {kebabOpen && (
+                <div className="slot-kebab-menu" onPointerDown={(event) => event.stopPropagation()}>
+                  {kebabView === 'menu' ? (
+                    <button className="slot-kebab-menu-item" type="button" onClick={() => setKebabView('favorites')}>
+                      즐겨찾기에서 열기
+                    </button>
+                  ) : (
+                    <div className="slot-kebab-favorites">
+                      {favorites.length === 0 ? (
+                        <div className="slot-kebab-empty">저장된 즐겨찾기가 없습니다</div>
+                      ) : (
+                        favorites.map((savedFavorite) => (
+                          <button
+                            key={savedFavorite.id}
+                            className="slot-kebab-favorite-item"
+                            type="button"
+                            onClick={() => {
+                              onSelectFavorite(savedFavorite);
+                              setKebabOpen(false);
+                            }}
+                          >
+                            {savedFavorite.title}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
         )}
         <button className="slot-icon-button" type="button" title="New chat" aria-label={`${label} new chat`} onClick={onHome}>
           <HomeIcon />
