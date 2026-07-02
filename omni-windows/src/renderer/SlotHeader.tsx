@@ -24,6 +24,11 @@ type SlotHeaderProps = {
   onSelectFavorite: (favorite: Favorite) => void;
   bookmarkBarVisible: boolean;
   onToggleBookmarkBar: () => void;
+  viewMode: 'desktop' | 'mobile';
+  zoomFactor: number;
+  onToggleViewMode: () => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
   onHome: () => void;
   isMaximized: boolean;
   onToggleMaximize: () => void;
@@ -113,6 +118,11 @@ export function SlotHeader({
   onSelectFavorite,
   bookmarkBarVisible,
   onToggleBookmarkBar,
+  viewMode,
+  zoomFactor,
+  onToggleViewMode,
+  onZoomIn,
+  onZoomOut,
   onHome,
   isMaximized,
   onToggleMaximize,
@@ -299,6 +309,43 @@ export function SlotHeader({
                       >
                         {bookmarkBarVisible ? '즐겨찾기바 숨기기' : '즐겨찾기바 보이기'}
                       </button>
+                      <button
+                        className="slot-kebab-menu-item"
+                        type="button"
+                        onClick={() => {
+                          onToggleViewMode();
+                          setKebabOpen(false);
+                        }}
+                      >
+                        {viewMode === 'desktop' ? '모바일로 보기' : '데스크탑으로 보기'}
+                      </button>
+                      {viewMode === 'desktop' && (
+                        <div
+                          className="slot-kebab-menu-item"
+                          onClick={(event) => event.stopPropagation()}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
+                        >
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onZoomOut();
+                            }}
+                          >
+                            -
+                          </button>
+                          <span>{Math.round(zoomFactor * 100)}%</span>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onZoomIn();
+                            }}
+                          >
+                            +
+                          </button>
+                        </div>
+                      )}
                     </>
                   ) : (
                     <div className="slot-kebab-favorites">

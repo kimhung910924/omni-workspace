@@ -4,6 +4,88 @@
 > 같은 문제를 다시 만났을 때 검색해서 찾아보는 용도.
 
 ---
+## 2026-07-02 — 웹슬롯 즐겨찾기 3단계(B1/B2), 즐겨찾기바, 웹슬롯 모바일뷰/줌
+
+**작업 — 즐겨찾기 3단계-B1 (사이드바 관리자 UI)**
+
+* 사이드바 "즐겨찾기" 탭을 클릭-오픈형에서 순수 관리 화면으로 전환 — 카드
+  클릭해도 더 이상 웹슬롯 안 열림, 대신 카드에 폴더 이동 `<select>` 추가
+* 좌측 폴더 목록(1단 구조, 전체/미분류/폴더별 개수 표시) + 우측 그리드
+  2컬럼 레이아웃(`favorites-manager`, `favorites-folder-list`,
+  `favorites-grid-area` 신규 class)
+* "새 폴더"/"이름수정"이 `window.prompt()` 대신 진짜 모달로 교체됨 —
+  기존에 "새 폴더 버튼이 안 눌린다"고 보였던 증상은 사실 `window.prompt()`가
+  Electron 렌더러에서 불안정했던 것으로 추정, 모달 교체로 자연히 해결
+
+**문제 — 네이버 등 웹슬롯에서 내부 링크 클릭 시 별도 네이티브 팝업 창으로
+튐**
+
+* 원인: `electron/main.ts`의 `setWindowOpenHandler`가 모든 webview의
+  `window.open()`/`target="_blank"`를 무조건 새 `BrowserWindow` 팝업으로
+  띄우던 구조. 원래 Gemini 등 AI provider의 Google OAuth 팝업 로그인을 위해
+  만든 동작인데, 웹슬롯(포털 사이트류)에는 안 맞음
+* 해결: `contents.session === session.fromPartition(WEBSLOT_PARTITION)`으로
+  웹슬롯 여부 판별 → 웹슬롯이면 팝업 대신 같은 webview에서 `loadURL`로
+  이동(`action: 'deny'`), AI provider는 기존 팝업 동작 그대로 유지
+* 회귀 테스트: Gemini 로그아웃 후 재로그인 팝업 정상 작동 확인
+
+**작업 — 즐겨찾기 3단계-B2 (별표 팝오버, 케밥 메뉴)**
+
+* SlotHeader 별표 버튼을 "클릭 시 즉시 저장, 피드백 없음" 방식에서 크롬
+  스타일 팝오버(제목 입력 + 폴더 선택 + 완료/삭제)로 교체
+* SlotHeader에 케밥(⋯) 메뉴 신규 추가(웹슬롯 전용) — "즐겨찾기에서 열기"
+  항목으로 저장된 즐겨찾기 목록을 보여주고, 클릭 시 **현재 슬롯이 그 URL로
+  이동**(새 슬롯 생성 아님)
+
+**결정사항 — 즐겨찾기바 설계, 중간에 전역 → 슬롯별로 방향 전환**
+
+* 최초 설계: Stage 상단에 전역으로 한 번 렌더링, 클릭 시 "활성 슬롯이
+  웹슬롯이면 그 슬롯 이동, 아니면 새 슬롯 생성" 폴백 방식으로 구현 지시함
+* 흥기님 피드백으로 재설계: 즐겨찾기바는 전역이 아니라 **웹슬롯 하나하나의
+  SlotHeader 바로 아래 붙는 것**이 맞는 개념이었음(AI 슬롯엔 아예 없음).
+  이러면 "어느 슬롯이 이동할지" 모호함 자체가 사라짐 — 그 바가 속한 슬롯
+  자신만 이동
+* 최종 구현: `features/favorites/BookmarkBar.tsx` 독립 컴포넌트로 분리
+  (슬롯마다 별도 인스턴스로 자기 너비를 각자 측정해야 하므로). 미분류
+  즐겨찾기는 개별 pill, 폴더는 폴더 pill(클릭 시 드롭다운). 컨테이너 너비
+  넘치면 크롬처럼 "더보기(»)" 드롭다운(ResizeObserver + 항목 offsetWidth
+  누적 측정 방식, 스크롤 방식은 폐기)
+* 케밥 메뉴에 즐겨찾기바 표시/숨기기 토글 추가, `localStorage` 영속
+  (`omni-bookmark-bar-visible`), 기본값 true
+* Dock "+"의 즐겨찾기 선택 흐름(`handleOpenFavorite`, 새 슬롯 생성)은
+  건드리지 않음 — 그건 여전히 유효한 별개 동작
+
+**작업 — 웹슬롯 모바일뷰 / 줌 조절 (케밥 메뉴), 3단계 시행착오**
+
+* 데스크탑 모드에서 줌 +/- 조절(`webview.setZoomFactor`)은 1차 시도로 바로
+  성공
+* 모바일뷰 전환은 세 번의 시행착오 끝에 해결:
+  1. `enableDeviceEmulation`(뷰포트 크기만 속임)만으로 시도 → 실패, 케밥
+     텍스트는 토글되는데 페이지가 전혀 반응 안 함
+  2. `fitToView: true` 파라미터 추가 → 여전히 실패
+  3. **진짜 원인 확정**: 뷰포트 문제가 아니라 User-Agent 문제였음 — 네이버 등
+     사이트는 화면 크기가 아니라 UA로 모바일 여부를 판별해서 서버가 계속
+     데스크탑 HTML을 내려주고 있었음. `<webview>.setUserAgent()`로 그
+     슬롯만 콕 집어 모바일 UA로 전환하는 방식으로 해결 (세션/파티션 분리
+     없이 webview 인스턴스 메서드만으로 가능했음 — B안(파티션 분리)까지
+     안 가도 됐음)
+* 추가 버그: 모바일 UA로 전환하면 네이버가 서버 단에서 `m.naver.com`으로
+  리다이렉트시키는데, 데스크탑으로 복귀할 때 단순 `reload()`만 하면 이미
+  옮겨간 모바일 도메인을 다시 불러올 뿐이라 원래 주소로 안 돌아오던 문제
+  발견 → 모바일 전환 직전 URL을 `desktopUrlBeforeMobileRef`에 캐싱해뒀다가,
+  데스크탑 복귀 시 `reload()` 대신 그 URL로 `loadURL()` 하는 방식으로 해결
+* **알려진 한계로 확정, 더 이상 시도 안 함**: Google Docs는 모바일 UA로
+  접속하면 로그인 세션이 유효해도 `workspace.google.com` 마케팅
+  페이지나 "앱 다운로드" 유도 화면으로 강제 전환됨. 이건 Google이 모바일
+  웹 문서 편집 자체를 의도적으로 막고 앱 사용을 유도하는 정책이라, UA/쿠키/
+  세션 조작으로 우회 불가. 실제 안드로이드 Dex 모드에서도 동일 현상 확인
+  (흥기님 실사용 경험). 사이트별 대응이 필요한 영역이라 별도 예외처리(예:
+  docs.google.com일 때 모바일뷰 버튼 숨김) 여부는 보류
+
+**브랜치**: `feature/favorites-manager-ui`(B1 + 팝업버그) → main 머지 완료,
+`feature/favorites-star-kebab`(B2) → main 머지 완료,
+`feature/favorites-bookmark-bar` → `feature/bookmark-bar-per-slot`으로
+재설계 후 진행, `feature/webview-zoom-mobile-view` → main 머지 예정
 
 ## 2026-07-01 — Gemini 워크스테이션 재오픈 복원 실패, 원인을 Google 자체 버그로 최종 확정 (우리 쪽 작업 종료)
 

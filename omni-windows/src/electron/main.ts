@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, ipcMain, session, webContents } from 'electron';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -65,6 +65,35 @@ app.whenReady().then(() => {
   configureProviderUserAgents();
   ipcMain.handle('omni:get-webview-capture-preload-url', () => WEBVIEW_CAPTURE_PRELOAD_URL);
   ipcMain.handle('omni:get-app-locale', () => app.getLocale());
+  ipcMain.handle('omni:set-device-emulation', (_event, webContentsId: number, enabled: boolean) => {
+    const targetContents = webContents.fromId(webContentsId);
+
+    if (!targetContents) {
+      return;
+    }
+
+    if (enabled) {
+      const mobileDeviceEmulationOptions = {
+        screenPosition: 'mobile' as const,
+        screenSize: { width: 390, height: 844 },
+        viewSize: { width: 390, height: 844 },
+        viewPosition: { x: 0, y: 0 },
+        deviceScaleFactor: 3,
+        scale: 1,
+        fitToView: true,
+      };
+
+      targetContents.enableDeviceEmulation(mobileDeviceEmulationOptions);
+      targetContents.setZoomFactor(1);
+      setTimeout(() => {
+        if (!targetContents.isDestroyed()) {
+          targetContents.reload();
+        }
+      }, 100);
+    } else {
+      targetContents.disableDeviceEmulation();
+    }
+  });
   app.on('web-contents-created', (_event, contents) => {
     contents.on('will-attach-webview', (_attachEvent, webPreferences, params) => {
       if (params['data-omni-slot-kind'] === 'ai') {

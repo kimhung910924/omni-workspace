@@ -10,5 +10,6 @@ interface Window {
     webSlotPartition: string;
     getWebviewCapturePreloadUrl: () => Promise<string>;
     getAppLocale: () => Promise<string>;
+    setWebviewDeviceEmulation: (webContentsId: number, enabled: boolean) => Promise<void>;
   };
 }

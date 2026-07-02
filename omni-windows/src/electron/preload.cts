@@ -9,4 +9,6 @@ contextBridge.exposeInMainWorld('omni', {
   webSlotPartition: 'persist:webslot',
   getWebviewCapturePreloadUrl: () => ipcRenderer.invoke('omni:get-webview-capture-preload-url'),
   getAppLocale: () => ipcRenderer.invoke('omni:get-app-locale'),
+  setWebviewDeviceEmulation: (webContentsId: number, enabled: boolean) =>
+    ipcRenderer.invoke('omni:set-device-emulation', webContentsId, enabled),
 });

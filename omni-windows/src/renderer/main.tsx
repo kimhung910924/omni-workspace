@@ -46,6 +46,10 @@ type WebviewIpcMessageEvent = Event & {
 
 type TrackedProviderWebview = ProviderWebview & {
   getURL?: () => string;
+  getWebContentsId?: () => number;
+  getUserAgent?: () => string;
+  setUserAgent?: (userAgent: string) => void;
+  setZoomFactor?: (factor: number) => void;
   dataset: DOMStringMap & {
     omniTrackedSlot?: string;
     omniMemoSlot?: string;
@@ -83,6 +87,7 @@ type Tab = GroupTab | WorkspaceTab;
 type SidebarView = 'workspace-panel' | 'prompt-library' | 'favorites-panel' | null;
 type DropPosition = { targetId: string | null; side: 'before' | 'after' | null };
 type MemoProviderFilter = Memo['provider'];
+type SlotViewMode = 'desktop' | 'mobile';
 type StagePointerDrag = {
   id: string;
   startX: number;
@@ -93,6 +98,8 @@ type StagePointerDrag = {
 };
 
 const MAX_TABS_NOTICE = '상단탭이 꽉 찼습니다. 상단탭 자리 확보 후 다시 시도해주세요.';
+const MOBILE_USER_AGENT =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 const BOOKMARK_BAR_VISIBLE_KEY = 'omni-bookmark-bar-visible';
 const DEFAULT_STARTUP_PROVIDER_IDS: ProviderId[] = ['claude', 'chatgpt', 'gemini'];
 const MEMO_PROVIDER_FILTER_OPTIONS: Array<{ provider: MemoProviderFilter; label: string }> = [
@@ -433,6 +440,8 @@ function App() {
     const stored = window.localStorage.getItem(BOOKMARK_BAR_VISIBLE_KEY);
     return stored === null ? true : stored === 'true';
   });
+  const [slotViewModes, setSlotViewModes] = React.useState<Record<string, SlotViewMode>>({});
+  const [slotZoomFactors, setSlotZoomFactors] = React.useState<Record<string, number>>({});
   const [favoriteFilter, setFavoriteFilter] = React.useState<'all' | 'uncategorized' | string>('all');
   const [favoriteFolderModal, setFavoriteFolderModal] = React.useState<{
     mode: 'create' | 'rename';
@@ -455,6 +464,8 @@ function App() {
   const webviewRefCallbacks = React.useRef<Partial<Record<string, (webview: TrackedProviderWebview | null) => void>>>({});
   const webviewRefCallbackOwnerTabIdsRef = React.useRef<Partial<Record<string, string>>>({});
   const initialWebviewSrcBySlotIdRef = React.useRef<Record<string, string>>({});
+  const originalUserAgentBySlotIdRef = React.useRef<Record<string, string>>({});
+  const desktopUrlBeforeMobileRef = React.useRef<Record<string, string>>({});
   const readRestorableLiveSlotUrl = React.useCallback((slot: Slot): string | null => {
     const webview = webviewRefs.current[slot.id] as TrackedProviderWebview | undefined;
 
@@ -2254,6 +2265,77 @@ function App() {
     setBookmarkBarVisible((current) => !current);
   }, []);
 
+  const handleToggleSlotViewMode = React.useCallback((slotId: string, currentUrl: string) => {
+    const currentMode = slotViewModes[slotId] ?? 'desktop';
+    const nextMode: SlotViewMode = currentMode === 'desktop' ? 'mobile' : 'desktop';
+    const webview = webviewRefs.current[slotId] as TrackedProviderWebview | undefined;
+
+    if (webview?.getUserAgent && !originalUserAgentBySlotIdRef.current[slotId]) {
+      originalUserAgentBySlotIdRef.current[slotId] = webview.getUserAgent();
+    }
+
+    const webContentsId = webview?.getWebContentsId?.();
+
+    if (nextMode === 'mobile') {
+      desktopUrlBeforeMobileRef.current[slotId] = currentUrl;
+      webview?.setZoomFactor?.(1);
+      setSlotZoomFactors((currentFactors) => ({
+        ...currentFactors,
+        [slotId]: 1,
+      }));
+    }
+
+    setSlotViewModes((currentModes) => ({
+      ...currentModes,
+      [slotId]: nextMode,
+    }));
+
+    if (webview?.setUserAgent) {
+      if (nextMode === 'mobile') {
+        webview.setUserAgent(MOBILE_USER_AGENT);
+      } else {
+        const originalUserAgent = originalUserAgentBySlotIdRef.current[slotId];
+
+        if (originalUserAgent) {
+          webview.setUserAgent(originalUserAgent);
+        }
+      }
+    }
+
+    const emulationUpdate =
+      typeof webContentsId === 'number'
+        ? window.omni?.setWebviewDeviceEmulation(webContentsId, nextMode === 'mobile')
+        : undefined;
+
+    const restoreUrl = nextMode === 'desktop' ? desktopUrlBeforeMobileRef.current[slotId] : undefined;
+    const finishTransition = () => {
+      if (restoreUrl) {
+        void webview?.loadURL?.(restoreUrl);
+      } else {
+        webview?.reload?.();
+      }
+    };
+
+    if (emulationUpdate) {
+      void emulationUpdate.finally(finishTransition);
+      return;
+    }
+
+    finishTransition();
+  }, [slotViewModes]);
+
+  const handleSlotZoomChange = React.useCallback((slotId: string, direction: 'in' | 'out') => {
+    const currentZoom = slotZoomFactors[slotId] ?? 1;
+    const zoomDelta = direction === 'in' ? 0.1 : -0.1;
+    const nextZoom = Math.min(2, Math.max(0.5, Math.round((currentZoom + zoomDelta) * 10) / 10));
+
+    (webviewRefs.current[slotId] as TrackedProviderWebview | undefined)?.setZoomFactor?.(nextZoom);
+    setSlotZoomFactors((currentFactors) => ({
+      ...currentFactors,
+      [slotId]: nextZoom,
+    }));
+  }, [slotZoomFactors]);
+
   const handleCreateFavoriteFolder = React.useCallback((name: string) => {
     const folderName = name.trim();
 
@@ -2966,6 +3048,11 @@ function App() {
                           favorites={favorites}
                           bookmarkBarVisible={bookmarkBarVisible}
                           onToggleBookmarkBar={handleToggleBookmarkBar}
+                          viewMode={slotViewModes[slot.id] ?? 'desktop'}
+                          zoomFactor={slotZoomFactors[slot.id] ?? 1}
+                          onToggleViewMode={() => handleToggleSlotViewMode(slot.id, slot.currentUrl)}
+                          onZoomIn={() => handleSlotZoomChange(slot.id, 'in')}
+                          onZoomOut={() => handleSlotZoomChange(slot.id, 'out')}
                           onSaveFavorite={(title, folderId) =>
                             handleSaveFavorite(slot.currentUrl, title, folderId, findFavoriteByUrl(slot.currentUrl)?.id)
                           }
